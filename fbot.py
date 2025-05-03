@@ -5,7 +5,7 @@ from fmodel import predict, INTENTS_LIST
 import asyncio
 import random
 import os
-import datetime
+from datetime import datetime 
 from dotenv import load_dotenv
 import logging  # Import the logging module
 
@@ -42,7 +42,7 @@ except Exception as e:
 @client.event
 async def on_ready():
     await client.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="commands | !ping"))
-    logger.info(f"✅ {client.user} is online | {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"✅ {client.user} is online | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"Connected to {len(client.guilds)} server(s)")
 
 @client.command()
@@ -309,6 +309,7 @@ async def handle_update_team(message, entities):
                     {"$set": {"members": members_list, "updated_at": datetime.datetime.utcnow()}}
                 )
                 if update_result.modified_count > 0:
+                    # Get updated team info for display
                     team_doc = collection.find_one({"$or": [{"team_name": team_name}, {"team": team_name}]})
                     
                     fields = [
@@ -342,6 +343,7 @@ async def handle_update_team(message, entities):
                 )
 
                 if result.matched_count:
+                    # Get updated team info for display
                     team_doc = collection.find_one({"$or": [{"team_name": team_name}, {"team": team_name}]})
                     
                     fields = [
@@ -368,6 +370,7 @@ async def handle_update_team(message, entities):
         await message.channel.send("❌ No field specified to update in time.")
 
 async def handle_show_team_info(message, entities):
+    # FIX: Standardize entity names
     team_name = entities.get("team_name") or entities.get("team")
 
     if not team_name:
@@ -389,6 +392,7 @@ async def handle_show_team_info(message, entities):
         ))
         return
 
+    # FIX: Check if members is in the document
     members_list = doc.get("members", [])
     members = "\n• " + "\n• ".join(members_list) if members_list else "No members"
 
@@ -412,7 +416,7 @@ import discord
 from datetime import datetime
 
 async def handle_remove_member(message, entities):
-    # === Fallback entity extractor if entities are incomplete ===
+    # === Backup extractor if NLP misses entities ===
     def extract_entities(text):
         member_pattern = r"(?:remove|delete)\s+([A-Za-z]+)"
         team_pattern = r"from\s+(?:team\s+)?(?:\"([^\"]+)\"|([A-Za-z\s]+))"
@@ -428,7 +432,7 @@ async def handle_remove_member(message, entities):
             "team_name": team_name.strip() if team_name else None
         }
 
-    # Merge with fallback extraction if necessary
+    # Update missing entities if needed
     if not entities.get("team_name") and not entities.get("team"):
         fallback = extract_entities(message.content)
         entities.update({k: v for k, v in fallback.items() if v})
@@ -445,7 +449,7 @@ async def handle_remove_member(message, entities):
         return
 
     try:
-        # Case-insensitive match for team name
+        # Case-insensitive team search
         team_doc = collection.find_one({
             "$or": [
                 {"team_name": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}},
@@ -465,7 +469,7 @@ async def handle_remove_member(message, entities):
             ))
             return
 
-        # Remove the member from the team
+        # Proceed with member removal
         result = collection.update_one(
             {"_id": team_doc["_id"]},
             {
@@ -477,7 +481,7 @@ async def handle_remove_member(message, entities):
         if result.modified_count > 0:
             fields = [("Member", name, True), ("Team", team_doc.get("team_name", team_name), True)]
             embed = await create_success_embed(
-                "Member Removed", 
+                "Member Removed",
                 f"**{name}** has been removed from **{team_doc.get('team_name', team_name)}**.",
                 fields
             )
