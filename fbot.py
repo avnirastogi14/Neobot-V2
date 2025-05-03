@@ -65,13 +65,13 @@ async def bothelp(ctx):
     embed.add_field(
         name="Example Commands",
         value=( """ **Available Commands**:
-    • `create_team <team_name> [role] [members...] [repo] [status]`: Create a new team (e.g., `create_team Innovation Crew`).
-    • `assign_role <member_name> <role> to <team_name>`: Assign a role to a member (e.g., `assign_role Alice Lead Developer to Innovation Crew`).
-    • `update_team <team_name>`: Update details for a team (e.g., `update_team Innovation Crew`).
-    • `remove_member <member_name> from <team_name>`: Remove a member from a team (e.g., `remove_member Bob from Innovation Crew`).
-    • `list_teams`: Show all teams (e.g., `list_teams`).
-    • `show_role_info <team_name>`: Show information about a specific team (e.g., `show_role_info Innovation Crew`).
-    • `get_member_info <member_name>`: Show information about a specific member (e.g., `get_member_info Alice`).
+    • `Create a new team`.
+    • `Assign role to a member in the team`.
+    • `Update Team Details - Members, Repository, Status`.
+    • `Remove a Team Member`.
+    • `List all teams in the database`.
+    • `Show a specific team's details`.
+    • `!exit`: To exit from current command.
     • `!bothelp`: Show this help message. """),
         inline=False
     )
