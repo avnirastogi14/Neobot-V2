@@ -309,7 +309,6 @@ async def handle_update_team(message, entities):
                     {"$set": {"members": members_list, "updated_at": datetime.datetime.utcnow()}}
                 )
                 if update_result.modified_count > 0:
-                    # Get updated team info for display
                     team_doc = collection.find_one({"$or": [{"team_name": team_name}, {"team": team_name}]})
                     
                     fields = [
@@ -343,7 +342,6 @@ async def handle_update_team(message, entities):
                 )
 
                 if result.matched_count:
-                    # Get updated team info for display
                     team_doc = collection.find_one({"$or": [{"team_name": team_name}, {"team": team_name}]})
                     
                     fields = [
@@ -370,7 +368,6 @@ async def handle_update_team(message, entities):
         await message.channel.send("❌ No field specified to update in time.")
 
 async def handle_show_team_info(message, entities):
-    # FIX: Standardize entity names
     team_name = entities.get("team_name") or entities.get("team")
 
     if not team_name:
@@ -392,7 +389,6 @@ async def handle_show_team_info(message, entities):
         ))
         return
 
-    # FIX: Check if members is in the document
     members_list = doc.get("members", [])
     members = "\n• " + "\n• ".join(members_list) if members_list else "No members"
 
@@ -412,7 +408,7 @@ async def handle_show_team_info(message, entities):
     await message.channel.send(embed=embed)
 
 async def handle_remove_member(message, entities):
-    # FIX: Standardize entity names
+    # FIX: entity names
     team_name = entities.get("team_name") or entities.get("team")
     name = entities.get("member_name") or entities.get("name")
 
@@ -421,7 +417,6 @@ async def handle_remove_member(message, entities):
         return
 
     try:
-        # First remove member from the team's member list
         if team_name:
             result = collection.update_one(
                 {"team_name": team_name},
@@ -429,13 +424,11 @@ async def handle_remove_member(message, entities):
             )
 
             if result.modified_count == 0:
-                # Try with "team" field
                 result = collection.update_one(
                     {"team": team_name},
                     {"$pull": {"members": name}}
                 )
 
-        # Then remove the member document
         result = collection.delete_one({"name": name})
 
         if result.deleted_count > 0:
