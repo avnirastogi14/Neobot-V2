@@ -1,5 +1,3 @@
-
-
 import discord
 from discord.ext import commands
 from pymongo import MongoClient
@@ -77,6 +75,7 @@ async def bothelp(ctx):
     • `Remove a Team Member`.
     • `List all teams in the database`.
     • `Show a specific team's details`.
+    • `Delete a team`.
     • `!exit`: To exit from current command.
     • `!bothelp`: Show this help message. """),
         inline=False
@@ -117,6 +116,7 @@ async def on_message(message):
             await message.channel.send(f"Great! Now, what is the **{TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]}**? (or type 'skip' to leave empty)")
         else:
             await handle_create_team_interactive(message, TEAM_CREATION_DATA)
+            global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX # Declare globals here
             TEAM_CREATION_USER = None
             TEAM_CREATION_DATA = {}
             TEAM_CREATION_INDEX = 0
@@ -188,40 +188,6 @@ async def on_message(message):
             pass
     finally:
         IS_COMMAND_RUNNING = False # Reset flag after command execution (or error)
-
-async def handle_delete_team(message, entities):
-    """Handle deleting a team from the database."""
-    team_name = entities.get("team_name") or entities.get("team")
-
-    if not team_name:
-        await message.channel.send("⚠️ Please specify the name of the team to delete.")
-        return
-
-    try:
-        # Case-insensitive deletion
-        delete_result = collection.delete_one({
-            "$or": [
-                {"team_name": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}},
-                {"team": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}}
-            ]
-        })
-
-        if delete_result.deleted_count > 0:
-            embed = await create_success_embed(
-                "Team Deleted",
-                f"Team **{team_name}** has been successfully deleted."
-            )
-            await message.channel.send(embed=embed)
-        else:
-            await message.channel.send(embed=discord.Embed(
-                title="Team Not Found",
-                description=f"No team found with the name **{team_name}**.",
-                color=discord.Color.gold()
-            ))
-
-    except Exception as e:
-        logger.error(f"Error deleting team {team_name}: {e}")
-        await message.channel.send(f"❌ Database error while deleting team: {e}")
 
 async def create_success_embed(title, description, fields=None):
     """Create a consistent success embed that stands out"""
@@ -640,6 +606,40 @@ async def start_create_team(message):
     TEAM_CREATION_DATA = {}
     TEAM_CREATION_INDEX = 0
     await message.channel.send(f"Let's create a new team! What is the **{TEAM_CREATION_FIELDS[0]}**?")
+
+async def handle_delete_team(message, entities):
+    """Handle deleting a team from the database."""
+    team_name = entities.get("team_name") or entities.get("team")
+
+    if not team_name:
+        await message.channel.send("⚠️ Please specify the name of the team to delete.")
+        return
+
+    try:
+        # Case-insensitive deletion
+        delete_result = collection.delete_one({
+            "$or": [
+                {"team_name": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}},
+                {"team": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}}
+            ]
+        })
+
+        if delete_result.deleted_count > 0:
+            embed = await create_success_embed(
+                "Team Deleted",
+                f"Team **{team_name}** has been successfully deleted."
+            )
+            await message.channel.send(embed=embed)
+        else:
+            await message.channel.send(embed=discord.Embed(
+                title="Team Not Found",
+                description=f"No team found with the name **{team_name}**.",
+                color=discord.Color.gold()
+            ))
+
+    except Exception as e:
+        logger.error(f"Error deleting team {team_name}: {e}")
+        await message.channel.send(f"❌ Database error while deleting team: {e}")
 
 async def handle_create_team_interactive(message, team_data):
     """Handles the interactive creation of a new team."""
