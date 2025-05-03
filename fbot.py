@@ -1,3 +1,5 @@
+
+
 import discord
 from discord.ext import commands
 from pymongo import MongoClient
@@ -5,9 +7,10 @@ from fmodel import predict, INTENTS_LIST
 import asyncio
 import random
 import os
-from datetime import datetime 
+from datetime import datetime
 from dotenv import load_dotenv
 import logging  # Import the logging module
+import re
 
 load_dotenv(dotenv_path='C:/Users/Hrida/OneDrive/Documents/Desktop/Avni_College/foss_p/tesserx/data.env')
 
@@ -30,6 +33,9 @@ TEAM_CREATION_USER = None
 TEAM_CREATION_DATA = {}
 TEAM_CREATION_FIELDS = ["team_name", "role", "members", "repo", "status"]
 TEAM_CREATION_INDEX = 0
+
+# Global variable to track if a command is being executed
+IS_COMMAND_RUNNING = False
 
 try:
     mongo_client = MongoClient("mongodb://localhost:27017/")
@@ -84,6 +90,17 @@ async def on_message(message):
     if message.author == client.user:
         return
 
+    global IS_COMMAND_RUNNING
+    if message.content.lower() == "!exit" and IS_COMMAND_RUNNING:
+        IS_COMMAND_RUNNING = False
+        await message.channel.send("⌚❌ Exiting current command - Execution Aborted!")
+        # Reset any ongoing interactive processes here if needed
+        global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
+        TEAM_CREATION_USER = None
+        TEAM_CREATION_DATA = {}
+        TEAM_CREATION_INDEX = 0
+        return
+
     await client.process_commands(message)
 
     if message.content.startswith(client.command_prefix):
@@ -95,7 +112,7 @@ async def on_message(message):
         field = TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]
         TEAM_CREATION_DATA[field] = message.content
         TEAM_CREATION_INDEX += 1
-        
+
         if TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
             await message.channel.send(f"Great! Now, what is the **{TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]}**? (or type 'skip' to leave empty)")
         else:
@@ -126,7 +143,7 @@ async def on_message(message):
         entities = prediction_result.get("entities", {})
         confidence = prediction_result.get("confidence", "low")
         logger.info(f"Intent predicted: {intent}, Entities: {entities}, Confidence: {confidence}")
-        
+
         # Don't trigger help unless directly asked
         if intent == "help" and confidence == "high":
             await client.get_command('bothelp').invoke(await client.get_context(message))
@@ -141,29 +158,71 @@ async def on_message(message):
     # FIX: Log both intent and entities to help with debugging
     logger.info(f"Handling intent: {intent} with entities: {entities}")
 
-    if intent == "assign_role":
-        await handle_assign_role(message, entities)
-    elif intent == "update_team_repo":
-        await handle_update_team_repo(message, entities)
-    elif intent == "update_team": # This intent might still be triggered by old phrases
-        await handle_update_team(message, entities) # Redirect to the new handler
-    elif intent == "show_team_info": # Re-using the existing intent for showing team info
-        await handle_show_team_info(message, entities) # New handler
-    elif intent == "remove_member":
-        await handle_remove_member(message, entities)
-    elif intent == "list_teams":
-        await handle_list_teams(message)
-    elif intent == "get_member_info":
-        await handle_member_info(message, entities)
-    elif intent == "create_team":
-        logger.info("Calling handle_create_team function.")
-        await start_create_team(message)
-    elif intent == "greeting" and confidence == "high":
-        await message.channel.send(f"👋 Hello {message.author.display_name}!")
-    elif not intent or intent == "unknown" or confidence == "low":
-        # Don't respond with the help message for low confidence predictions
-        pass
-    
+    global IS_COMMAND_RUNNING
+    IS_COMMAND_RUNNING = True  # Set flag when handling a command
+
+    try:
+        if intent == "assign_role":
+            await handle_assign_role(message, entities)
+        elif intent == "update_team_repo":
+            await handle_update_team_repo(message, entities)
+        elif intent == "update_team": # This intent might still be triggered by old phrases
+            await handle_update_team(message, entities) # Redirect to the new handler
+        elif intent == "show_team_info": # Re-using the existing intent for showing team info
+            await handle_show_team_info(message, entities) # New handler
+        elif intent == "remove_member":
+            await handle_remove_member(message, entities)
+        elif intent == "list_teams":
+            await handle_list_teams(message)
+        elif intent == "get_member_info":
+            await handle_member_info(message, entities)
+        elif intent == "create_team":
+            logger.info("Calling handle_create_team function.")
+            await start_create_team(message)
+        elif intent == "delete_team":
+            await handle_delete_team(message, entities)
+        elif intent == "greeting" and confidence == "high":
+            await message.channel.send(f"👋 Hello {message.author.display_name}!")
+        elif not intent or intent == "unknown" or confidence == "low":
+            # Don't respond with the help message for low confidence predictions
+            pass
+    finally:
+        IS_COMMAND_RUNNING = False # Reset flag after command execution (or error)
+
+async def handle_delete_team(message, entities):
+    """Handle deleting a team from the database."""
+    team_name = entities.get("team_name") or entities.get("team")
+
+    if not team_name:
+        await message.channel.send("⚠️ Please specify the name of the team to delete.")
+        return
+
+    try:
+        # Case-insensitive deletion
+        delete_result = collection.delete_one({
+            "$or": [
+                {"team_name": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}},
+                {"team": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}}
+            ]
+        })
+
+        if delete_result.deleted_count > 0:
+            embed = await create_success_embed(
+                "Team Deleted",
+                f"Team **{team_name}** has been successfully deleted."
+            )
+            await message.channel.send(embed=embed)
+        else:
+            await message.channel.send(embed=discord.Embed(
+                title="Team Not Found",
+                description=f"No team found with the name **{team_name}**.",
+                color=discord.Color.gold()
+            ))
+
+    except Exception as e:
+        logger.error(f"Error deleting team {team_name}: {e}")
+        await message.channel.send(f"❌ Database error while deleting team: {e}")
+
 async def create_success_embed(title, description, fields=None):
     """Create a consistent success embed that stands out"""
     embed = discord.Embed(
@@ -175,7 +234,7 @@ async def create_success_embed(title, description, fields=None):
         for name, value, inline in fields:
             if value:  # Only add field if value exists
                 embed.add_field(name=name, value=value, inline=inline)
-    
+
     # Add timestamp and border to make it stand out more
     embed.timestamp = datetime.datetime.now()
     return embed
@@ -231,7 +290,7 @@ async def handle_assign_role(message, entities):
             ("Team", team, True)
         ]
         embed = await create_success_embed(
-            "Role Assignment Successful", 
+            "Role Assignment Successful",
             f"**{name}** has been added to **{team}**" + (f" as **{role}**" if role else ""),
             fields
         )
@@ -244,34 +303,34 @@ async def handle_update_team_repo(message, entities):
     """Handle updating team repo URL"""
     team_name = entities.get("team_name") or entities.get("team")
     repo = entities.get("repo")
-    
+
     if not team_name or not repo:
         await message.channel.send("❌ Team name and repository URL are required.")
         return
-    
+
     try:
         result = collection.update_one(
             {"team_name": team_name},
             {"$set": {"repo": repo, "updated_at": datetime.datetime.now()}}
         )
-        
+
         if result.modified_count == 0:
             # Try with "team" field
             result = collection.update_one(
                 {"team": team_name},
                 {"$set": {"repo": repo, "updated_at": datetime.datetime.now()}}
             )
-        
+
         if result.modified_count > 0:
             # Get updated team info
             team_doc = collection.find_one({"team_name": team_name}) or collection.find_one({"team": team_name})
-            
+
             fields = [
                 ("Repository", repo, False),
                 ("Team", team_name, True)
             ]
             embed = await create_success_embed(
-                "Repository Updated", 
+                "Repository Updated",
                 f"Repository URL for **{team_name}** has been updated.",
                 fields
             )
@@ -311,13 +370,13 @@ async def handle_update_team(message, entities):
                 if update_result.modified_count > 0:
                     # Get updated team info for display
                     team_doc = collection.find_one({"$or": [{"team_name": team_name}, {"team": team_name}]})
-                    
+
                     fields = [
                         ("Team", team_name, True),
                         ("Members", "\n• " + "\n• ".join(members_list), False)
                     ]
                     embed = await create_success_embed(
-                        "Team Members Updated", 
+                        "Team Members Updated",
                         f"Members for **{team_name}** have been updated.",
                         fields
                     )
@@ -345,13 +404,13 @@ async def handle_update_team(message, entities):
                 if result.matched_count:
                     # Get updated team info for display
                     team_doc = collection.find_one({"$or": [{"team_name": team_name}, {"team": team_name}]})
-                    
+
                     fields = [
                         ("Team", team_name, True),
                         (field_to_update.capitalize(), new_value, True)
                     ]
                     embed = await create_success_embed(
-                        "Team Updated", 
+                        "Team Updated",
                         f"Updated **{field_to_update}** for **{team_name}**.",
                         fields
                     )
@@ -370,19 +429,31 @@ async def handle_update_team(message, entities):
         await message.channel.send("❌ No field specified to update in time.")
 
 async def handle_show_team_info(message, entities):
-    # FIX: Standardize entity names
+    # === Fallback extractor if NLP misses team name ===
+    def extract_team_name(text):
+        pattern = r"(?:show\s+(?:team\s+)?)(?:\"([^\"]+)\"|([A-Za-z\s]+))"
+        match = re.search(pattern, text, re.IGNORECASE)
+        return match.group(1) or match.group(2) if match else None
+
+    # Fallback entity extraction
+    if not entities.get("team_name") and not entities.get("team"):
+        fallback = extract_team_name(message.content)
+        if fallback:
+            entities["team_name"] = fallback.strip()
+
     team_name = entities.get("team_name") or entities.get("team")
 
     if not team_name:
         await message.channel.send("Please specify the team name.")
         return
 
-    # FIX: First try with "team_name" field
-    doc = collection.find_one({"team_name": team_name})
-
-    if not doc:
-        # Try with "team" field if not found
-        doc = collection.find_one({"team": team_name})
+    # Case-insensitive search
+    doc = collection.find_one({
+        "$or": [
+            {"team_name": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}},
+            {"team": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}}
+        ]
+    })
 
     if not doc:
         await message.channel.send(embed=discord.Embed(
@@ -392,7 +463,7 @@ async def handle_show_team_info(message, entities):
         ))
         return
 
-    # FIX: Check if members is in the document
+    # Prepare response
     members_list = doc.get("members", [])
     members = "\n• " + "\n• ".join(members_list) if members_list else "No members"
 
@@ -401,7 +472,7 @@ async def handle_show_team_info(message, entities):
     status = doc.get("status", "N/A")
 
     embed = discord.Embed(
-        title=f"Team: {team_name}",
+        title=f"Team: {doc.get('team_name', team_name)}",
         color=discord.Color.blue()
     )
     embed.add_field(name="Role", value=role, inline=True)
