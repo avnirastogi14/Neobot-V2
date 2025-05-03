@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger("bot2")
 
 # Global variables for team creation process
-TEAM_CREATION_USER = None
+TEAM_CREATION_USER = ""
 TEAM_CREATION_DATA = {}
 TEAM_CREATION_FIELDS = ["team_name", "role", "members", "repo", "status"]
 TEAM_CREATION_INDEX = 0
@@ -86,15 +86,15 @@ async def bothelp(ctx):
 
 @client.event
 async def on_message(message):
+    # ✅ Global declarations at the top
+    global IS_COMMAND_RUNNING, TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
+
     if message.author == client.user:
         return
 
-    global IS_COMMAND_RUNNING
     if message.content.lower() == "!exit" and IS_COMMAND_RUNNING:
         IS_COMMAND_RUNNING = False
         await message.channel.send("⌚❌ Exiting current command - Execution Aborted!")
-        # Reset any ongoing interactive processes here if needed
-        global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
         TEAM_CREATION_USER = None
         TEAM_CREATION_DATA = {}
         TEAM_CREATION_INDEX = 0
@@ -106,7 +106,6 @@ async def on_message(message):
         return
 
     # Check for ongoing team creation process
-    global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
     if TEAM_CREATION_USER == message.author and TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
         field = TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]
         TEAM_CREATION_DATA[field] = message.content
@@ -116,7 +115,6 @@ async def on_message(message):
             await message.channel.send(f"Great! Now, what is the **{TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]}**? (or type 'skip' to leave empty)")
         else:
             await handle_create_team_interactive(message, TEAM_CREATION_DATA)
-            global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX # Declare globals here
             TEAM_CREATION_USER = None
             TEAM_CREATION_DATA = {}
             TEAM_CREATION_INDEX = 0
@@ -132,7 +130,6 @@ async def on_message(message):
     if len(client.processed_messages) > 100:
         client.processed_messages = set(list(client.processed_messages)[-80:])
 
-    # ***CRUCIAL FIX: Check again if the message is from the bot***
     if message.author == client.user:
         return
 
@@ -144,22 +141,19 @@ async def on_message(message):
         confidence = prediction_result.get("confidence", "low")
         logger.info(f"Intent predicted: {intent}, Entities: {entities}, Confidence: {confidence}")
 
-        # Don't trigger help unless directly asked
         if intent == "help" and confidence == "high":
             await client.get_command('bothelp').invoke(await client.get_context(message))
             return
         if intent == "exit" and confidence == "high":
-            await message.channel.send(f"⌚❌ Exiting Command - Command Aborted!")
+            await message.channel.send("⌚❌ Exiting Command - Command Aborted!")
             return
     except Exception as e:
         await message.channel.send(f"❌ Prediction error: `{str(e)}`")
         return
 
-    # FIX: Log both intent and entities to help with debugging
     logger.info(f"Handling intent: {intent} with entities: {entities}")
 
-    global IS_COMMAND_RUNNING
-    IS_COMMAND_RUNNING = True  # Set flag when handling a command
+    IS_COMMAND_RUNNING = True  # ✅ This is now legal
 
     try:
         if intent == "assign_role":
