@@ -192,11 +192,10 @@ async def create_success_embed(title, description, fields=None):
     )
     if fields:
         for name, value, inline in fields:
-            if value:  # Only add field if value exists
+            if value:
                 embed.add_field(name=name, value=value, inline=inline)
 
-    # Add timestamp and border to make it stand out more
-    embed.timestamp = datetime.datetime.now()
+    embed.timestamp = datetime.now()  # ✅ Fix here
     return embed
 
 async def handle_assign_role(message, entities):
