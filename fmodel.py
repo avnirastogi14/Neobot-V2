@@ -16,7 +16,7 @@ logger = logging.getLogger("fmodel")
 INTENTS_LIST = [
     "assign_role",          # For assigning roles to team members
     "update_team",          # For updating team details
-    "show_role_info",       # For showing roles in a team
+    "show_team_info",       # For showing roles in a team
     "remove_member",        # For removing team members
     "list_teams",           # For listing all teams
     "get_member_info",      # For getting info about a specific member
@@ -204,12 +204,12 @@ def predict(user_input):
 
         # Domain-specific post-processing based on intent
         if predicted_intent == "list_teams" and extracted_entities.get("team_name"):
-            predicted_intent = "show_role_info"  # If team is mentioned in list_teams, it's likely show_role_info
+            predicted_intent = "show_team_info"  # If team is mentioned in list_teams, it's likely show_team_info
 
         if predicted_intent == "assign_role" and not extracted_entities.get("name") and not extracted_entities.get("role") and extracted_entities.get("team_name"):
             # Might be asking about team info if only team name is present
             if re.search(r"(?i)\b(what are|who is in|members of)\b", cleaned_input):
-                predicted_intent = "show_role_info"
+                predicted_intent = "show_team_info"
 
         if predicted_intent == "assign_role" and not extracted_entities.get("team_name") and extracted_entities.get("name") and extracted_entities.get("role"):
             # Inferring context - assigning role to a member, need team
