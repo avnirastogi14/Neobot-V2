@@ -407,47 +407,83 @@ async def handle_show_team_info(message, entities):
 
     await message.channel.send(embed=embed)
 
+import re
+import discord
+from datetime import datetime
+
 async def handle_remove_member(message, entities):
-    # FIX: entity names
+    # === Fallback entity extractor if entities are incomplete ===
+    def extract_entities(text):
+        member_pattern = r"(?:remove|delete)\s+([A-Za-z]+)"
+        team_pattern = r"from\s+(?:team\s+)?(?:\"([^\"]+)\"|([A-Za-z\s]+))"
+
+        member_match = re.search(member_pattern, text, re.IGNORECASE)
+        team_match = re.search(team_pattern, text, re.IGNORECASE)
+
+        member_name = member_match.group(1) if member_match else None
+        team_name = team_match.group(1) or team_match.group(2) if team_match else None
+
+        return {
+            "member_name": member_name.strip() if member_name else None,
+            "team_name": team_name.strip() if team_name else None
+        }
+
+    # Merge with fallback extraction if necessary
+    if not entities.get("team_name") and not entities.get("team"):
+        fallback = extract_entities(message.content)
+        entities.update({k: v for k, v in fallback.items() if v})
+
     team_name = entities.get("team_name") or entities.get("team")
     name = entities.get("member_name") or entities.get("name")
 
     if not name:
-        await message.channel.send("Member name is required.")
+        await message.channel.send("⚠️ Member name is required.")
+        return
+
+    if not team_name:
+        await message.channel.send("⚠️ Team name is required to remove a member.")
         return
 
     try:
-        if team_name:
-            result = collection.update_one(
-                {"team_name": team_name},
-                {"$pull": {"members": name}}
-            )
-
-            if result.modified_count == 0:
-                result = collection.update_one(
-                    {"team": team_name},
-                    {"$pull": {"members": name}}
-                )
-
-        result = collection.delete_one({"name": name})
-
-        if result.deleted_count > 0:
-            fields = [
-                ("Member", name, True),
-                ("Team", team_name if team_name else "All teams", True)
+        # Case-insensitive match for team name
+        team_doc = collection.find_one({
+            "$or": [
+                {"team_name": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}},
+                {"team": {"$regex": f"^{re.escape(team_name)}$", "$options": "i"}}
             ]
+        })
+
+        if not team_doc:
+            await message.channel.send(f"🚫 Team **{team_name}** not found.")
+            return
+
+        if name not in team_doc.get("members", []):
+            await message.channel.send(embed=discord.Embed(
+                title="Not Found",
+                description=f"No record found for member **{name}** in team **{team_doc.get('team_name', team_name)}**.",
+                color=discord.Color.gold()
+            ))
+            return
+
+        # Remove the member from the team
+        result = collection.update_one(
+            {"_id": team_doc["_id"]},
+            {
+                "$pull": {"members": name},
+                "$set": {"updated_at": datetime.utcnow()}
+            }
+        )
+
+        if result.modified_count > 0:
+            fields = [("Member", name, True), ("Team", team_doc.get("team_name", team_name), True)]
             embed = await create_success_embed(
                 "Member Removed", 
-                f"**{name}** has been removed" + (f" from **{team_name}**" if team_name else " from all teams"),
+                f"**{name}** has been removed from **{team_doc.get('team_name', team_name)}**.",
                 fields
             )
             await message.channel.send(embed=embed)
         else:
-            await message.channel.send(embed=discord.Embed(
-                title="Not Found",
-                description=f"No record found for member **{name}**.",
-                color=discord.Color.gold()
-            ))
+            await message.channel.send("⚠️ Member could not be removed. Please try again.")
 
     except Exception as e:
         logger.error(f"Error in handle_remove_member: {e}")
