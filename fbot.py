@@ -25,6 +25,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("bot2")
 
+# Global variables for team creation process
+TEAM_CREATION_USER = None
+TEAM_CREATION_DATA = {}
+TEAM_CREATION_FIELDS = ["team_name", "role", "members", "repo", "status"]
+TEAM_CREATION_INDEX = 0
+
 try:
     mongo_client = MongoClient("mongodb://localhost:27017/")
     db = mongo_client["discord_bot"]
@@ -83,6 +89,22 @@ async def on_message(message):
     if message.content.startswith(client.command_prefix):
         return
 
+    # Check for ongoing team creation process
+    global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
+    if TEAM_CREATION_USER == message.author and TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
+        field = TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]
+        TEAM_CREATION_DATA[field] = message.content
+        TEAM_CREATION_INDEX += 1
+        
+        if TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
+            await message.channel.send(f"Great! Now, what is the **{TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]}**? (or type 'skip' to leave empty)")
+        else:
+            await handle_create_team_interactive(message, TEAM_CREATION_DATA)
+            TEAM_CREATION_USER = None
+            TEAM_CREATION_DATA = {}
+            TEAM_CREATION_INDEX = 0
+        return
+
     # Cache to avoid repeat processing
     cache_key = f"{message.channel.id}:{message.id}"
     if not hasattr(client, 'processed_messages'):
@@ -102,7 +124,16 @@ async def on_message(message):
         prediction_result = predict(message.content)
         intent = prediction_result.get("intent")
         entities = prediction_result.get("entities", {})
-        logger.info(f"Intent predicted: {intent}, Entities: {entities}") # Log prediction result
+        confidence = prediction_result.get("confidence", "low")
+        logger.info(f"Intent predicted: {intent}, Entities: {entities}, Confidence: {confidence}")
+        
+        # Don't trigger help unless directly asked
+        if intent == "help" and confidence == "high":
+            await client.get_command('bothelp').invoke(await client.get_context(message))
+            return
+        if intent == "exit" and confidence == "high":
+            await message.channel.send(f"⌚❌ Exiting Command - Command Aborted!")
+            return
     except Exception as e:
         await message.channel.send(f"❌ Prediction error: `{str(e)}`")
         return
@@ -112,10 +143,12 @@ async def on_message(message):
 
     if intent == "assign_role":
         await handle_assign_role(message, entities)
+    elif intent == "update_team_repo":
+        await handle_update_team_repo(message, entities)
     elif intent == "update_team": # This intent might still be triggered by old phrases
         await handle_update_team(message, entities) # Redirect to the new handler
-    elif intent == "show_role_info":
-        await handle_show_roles(message, entities)
+    elif intent == "show_team_info": # Re-using the existing intent for showing team info
+        await handle_show_team_info(message, entities) # New handler
     elif intent == "remove_member":
         await handle_remove_member(message, entities)
     elif intent == "list_teams":
@@ -125,12 +158,27 @@ async def on_message(message):
     elif intent == "create_team":
         logger.info("Calling handle_create_team function.")
         await start_create_team(message)
-    elif intent == "help":
-        await client.get_command('bothelp').invoke(await client.get_context(message))
-    elif intent == "greeting":
+    elif intent == "greeting" and confidence == "high":
         await message.channel.send(f"👋 Hello {message.author.display_name}!")
-    else:
-        await message.channel.send(f"🤔 Sorry, I didn't quite understand that. Try using `!bothelp` for examples.")
+    elif not intent or intent == "unknown" or confidence == "low":
+        # Don't respond with the help message for low confidence predictions
+        pass
+    
+async def create_success_embed(title, description, fields=None):
+    """Create a consistent success embed that stands out"""
+    embed = discord.Embed(
+        title=f"✅ {title}",
+        description=description,
+        color=discord.Color.green()
+    )
+    if fields:
+        for name, value, inline in fields:
+            if value:  # Only add field if value exists
+                embed.add_field(name=name, value=value, inline=inline)
+    
+    # Add timestamp and border to make it stand out more
+    embed.timestamp = datetime.datetime.now()
+    return embed
 
 async def handle_assign_role(message, entities):
     """Handle role assignment intent"""
@@ -176,18 +224,62 @@ async def handle_assign_role(message, entities):
             # Then add member document
             collection.insert_one(data)
 
-        embed = discord.Embed(
-            title="✅ Role Assignment Successful",
-            color=discord.Color.green()
+        # Use the new success embed format
+        fields = [
+            ("Member", name, True),
+            ("Role", role if role else "N/A", True),
+            ("Team", team, True)
+        ]
+        embed = await create_success_embed(
+            "Role Assignment Successful", 
+            f"**{name}** has been added to **{team}**" + (f" as **{role}**" if role else ""),
+            fields
         )
-        embed.add_field(name="Member", value=name, inline=True)
-        if role:
-            embed.add_field(name="Role", value=role, inline=True)
-        if team:
-            embed.add_field(name="Team", value=team, inline=True)
         await message.channel.send(embed=embed)
     except Exception as e:
         logger.error(f"Error in handle_assign_role: {e}")
+        await message.channel.send(f"❌ Database error: {e}")
+
+async def handle_update_team_repo(message, entities):
+    """Handle updating team repo URL"""
+    team_name = entities.get("team_name") or entities.get("team")
+    repo = entities.get("repo")
+    
+    if not team_name or not repo:
+        await message.channel.send("❌ Team name and repository URL are required.")
+        return
+    
+    try:
+        result = collection.update_one(
+            {"team_name": team_name},
+            {"$set": {"repo": repo, "updated_at": datetime.datetime.now()}}
+        )
+        
+        if result.modified_count == 0:
+            # Try with "team" field
+            result = collection.update_one(
+                {"team": team_name},
+                {"$set": {"repo": repo, "updated_at": datetime.datetime.now()}}
+            )
+        
+        if result.modified_count > 0:
+            # Get updated team info
+            team_doc = collection.find_one({"team_name": team_name}) or collection.find_one({"team": team_name})
+            
+            fields = [
+                ("Repository", repo, False),
+                ("Team", team_name, True)
+            ]
+            embed = await create_success_embed(
+                "Repository Updated", 
+                f"Repository URL for **{team_name}** has been updated.",
+                fields
+            )
+            await message.channel.send(embed=embed)
+        else:
+            await message.channel.send(f"⚠️ Team **{team_name}** not found.")
+    except Exception as e:
+        logger.error(f"Error in handle_update_team_repo: {e}")
         await message.channel.send(f"❌ Database error: {e}")
 
 async def handle_update_team(message, entities):
@@ -217,7 +309,19 @@ async def handle_update_team(message, entities):
                     {"$set": {"members": members_list, "updated_at": datetime.datetime.utcnow()}}
                 )
                 if update_result.modified_count > 0:
-                    await message.channel.send(f"✅ Updated members for **{team_name}**.")
+                    # Get updated team info for display
+                    team_doc = collection.find_one({"$or": [{"team_name": team_name}, {"team": team_name}]})
+                    
+                    fields = [
+                        ("Team", team_name, True),
+                        ("Members", "\n• " + "\n• ".join(members_list), False)
+                    ]
+                    embed = await create_success_embed(
+                        "Team Members Updated", 
+                        f"Members for **{team_name}** have been updated.",
+                        fields
+                    )
+                    await message.channel.send(embed=embed)
                 else:
                     await message.channel.send(f"⚠️ Could not find team **{team_name}** to update members.")
             except asyncio.TimeoutError:
@@ -239,11 +343,19 @@ async def handle_update_team(message, entities):
                 )
 
                 if result.matched_count:
-                    await message.channel.send(embed=discord.Embed(
-                        title="✅ Team Updated",
-                        description=f"Updated **{field_to_update}** for **{team_name}** to:\n{new_value}",
-                        color=discord.Color.green()
-                    ))
+                    # Get updated team info for display
+                    team_doc = collection.find_one({"$or": [{"team_name": team_name}, {"team": team_name}]})
+                    
+                    fields = [
+                        ("Team", team_name, True),
+                        (field_to_update.capitalize(), new_value, True)
+                    ]
+                    embed = await create_success_embed(
+                        "Team Updated", 
+                        f"Updated **{field_to_update}** for **{team_name}**.",
+                        fields
+                    )
+                    await message.channel.send(embed=embed)
                 else:
                     await message.channel.send(embed=discord.Embed(
                         title="Team Not Found",
@@ -257,7 +369,7 @@ async def handle_update_team(message, entities):
     except asyncio.TimeoutError:
         await message.channel.send("❌ No field specified to update in time.")
 
-async def handle_show_roles(message, entities):
+async def handle_show_team_info(message, entities):
     # FIX: Standardize entity names
     team_name = entities.get("team_name") or entities.get("team")
 
@@ -282,7 +394,7 @@ async def handle_show_roles(message, entities):
 
     # FIX: Check if members is in the document
     members_list = doc.get("members", [])
-    members = "\n".join(members_list) if members_list else "No members"
+    members = "\n• " + "\n• ".join(members_list) if members_list else "No members"
 
     role = doc.get("role", "N/A")
     repo = doc.get("repo", "N/A")
@@ -327,11 +439,16 @@ async def handle_remove_member(message, entities):
         result = collection.delete_one({"name": name})
 
         if result.deleted_count > 0:
-            await message.channel.send(embed=discord.Embed(
-                title="✅ Member Removed",
-                description=f"Removed **{name}** from the database.",
-                color=discord.Color.green()
-            ))
+            fields = [
+                ("Member", name, True),
+                ("Team", team_name if team_name else "All teams", True)
+            ]
+            embed = await create_success_embed(
+                "Member Removed", 
+                f"**{name}** has been removed" + (f" from **{team_name}**" if team_name else " from all teams"),
+                fields
+            )
+            await message.channel.send(embed=embed)
         else:
             await message.channel.send(embed=discord.Embed(
                 title="Not Found",
@@ -411,12 +528,13 @@ async def handle_member_info(message, entities):
         await message.channel.send(f"❌ Database error: {e}")
 
 async def start_create_team(message):
-    global TEAM_CREATION_USER, TEAM_CREATION_DATA
+    global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
     if TEAM_CREATION_USER is not None:
         await message.channel.send("A team creation process is already in progress. Please complete that first.")
         return
     TEAM_CREATION_USER = message.author
     TEAM_CREATION_DATA = {}
+    TEAM_CREATION_INDEX = 0
     await message.channel.send(f"Let's create a new team! What is the **{TEAM_CREATION_FIELDS[0]}**?")
 
 async def handle_create_team_interactive(message, team_data):
@@ -435,28 +553,33 @@ async def handle_create_team_interactive(message, team_data):
         await message.channel.send(f"Team **{team_name}** already exists.")
         return
 
-    members = [member.strip() for member in members_str.split(',')] if members_str else []
+    members = [member.strip() for member in members_str.split(',')] if members_str and members_str.lower() != "skip" else []
 
     team_info = {
         "team_name": team_name,
-        "role": role,
+        "role": role if role and role.lower() != "skip" else "",
         "members": members,
-        "repo": repo,
-        "status": status,
+        "repo": repo if repo and repo.lower() != "skip" else "",
+        "status": status if status and status.lower() != "skip" else "",
         "created_at": datetime.datetime.now()
     }
 
     try:
         collection.insert_one(team_info)
-        embed = discord.Embed(
-            title="✅ Team Created",
-            description=f"Team **{team_name}** has been created successfully with the following details:",
-            color=discord.Color.green()
+        
+        # Use the new success embed format for consistency
+        fields = [
+            ("Role", team_info["role"] if team_info["role"] else "N/A", True),
+            ("Status", team_info["status"] if team_info["status"] else "N/A", True),
+            ("Repo", team_info["repo"] if team_info["repo"] else "N/A", False),
+            ("Members", "\n• " + "\n• ".join(members) if members else "No members yet", False)
+        ]
+        
+        embed = await create_success_embed(
+            "Team Created", 
+            f"Team **{team_name}** has been created successfully!",
+            fields
         )
-        embed.add_field(name="Role", value=role if role else "N/A", inline=False)
-        embed.add_field(name="Members", value=", ".join(members) if members else "N/A", inline=False)
-        embed.add_field(name="Repo", value=repo if repo else "N/A", inline=False)
-        embed.add_field(name="Status", value=status if status else "N/A", inline=False)
         await message.channel.send(embed=embed)
     except Exception as e:
         logger.error(f"Error creating team {team_name}: {e}")
