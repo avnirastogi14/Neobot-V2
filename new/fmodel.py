@@ -38,7 +38,6 @@ except Exception as e:
     ner = lambda x: []
     logger.warning("Using dummy pipelines")
 
-# ────────────────────────────  Helpers  ────────────────────────────
 def extract_entities(ner_results, text):
     """Extract entities for *both* team/member and role creation logic."""
     entities = {"name": None, "role": None, "team_name": None, "repo": None,
