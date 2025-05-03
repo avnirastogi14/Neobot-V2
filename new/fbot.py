@@ -1,42 +1,37 @@
-import discord, asyncio, os, re, logging, random
+import discord
+import asyncio
+import os
+import re
+import random
 from discord.ext import commands
 from pymongo import MongoClient
 from fmodel import predict, INTENTS_LIST
 from datetime import datetime
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
-# ────────────────────────────  Discord client  ────────────────────────────
+
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # ★ FIX: we need members cache for role-assignment
+intents.members = True
 client = commands.Bot(command_prefix="!", intents=intents)
 
-# ────────────────────────────  Logging  ────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
-    handlers=[logging.StreamHandler()],
-)
-logger = logging.getLogger("bot2")
 
-# ────────────────────────────  MongoDB  ────────────────────────────
+
 mongo_client = MongoClient(os.environ.get("MONGODB_URI"))
 db = mongo_client["discord_bot"]
 collection = db["Data"]
 
-# ────────────────────────────  Interactive-creation globals  ────────────────────────────
+
 TEAM_CREATION_FIELDS = ["team_name", "members", "role", "repo", "status"]
 TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX = None, {}, 0
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                               HELPERS                               ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 async def create_success_embed(title, desc, fields=None):
     e = discord.Embed(
-        title=f"✅ {title}", description=desc, color=discord.Color.green()
+        title=f"Done. {title}", description=desc, color=discord.Color.green()
     )
     if fields:
         for n, v, i in fields:
@@ -50,25 +45,24 @@ def parse_hex(s: str | None):
     if not s:
         return None
     s = s.lower().lstrip("#")
-    return discord.Color(int(f"0x{s}", 16)) if re.fullmatch(r"[0-9a-f]{6}", s) else None
+    if len(s) != 6:
+        return None
+    if s not in "abcdef0123456789":
+        return None
+
+    return discord.Color(int(f"0x{s}", 16))
 
 
 async def resolve_member(token: str, guild: discord.Guild) -> discord.Member | None:
-    """
-    Best-effort mapping of a token to a Member:
-        • <@mention>
-        • username / display-name (case-insensitive)
-    """
     mention = re.fullmatch(r"<@!?(?P<id>\d+)>", token.strip())
     if mention:
         uid = int(mention.group("id"))
         member = guild.get_member(uid) or await guild.fetch_member(uid)
         return member
 
-    # cached look-ups
     member = guild.get_member_named(
         token
-    )  # discord.py helper (global display-name or username)
+    )  
     if member:
         return member
 
@@ -78,16 +72,10 @@ async def resolve_member(token: str, guild: discord.Guild) -> discord.Member | N
         or m.name.lower() == token_lower,
         guild.members,
     )
-    return member  # may be None
+    return member 
 
 
 async def parse_members(raw: str, guild: discord.Guild):
-    """
-    Returns tuple:
-        names_for_db   – list[str]
-        matched        – list[discord.Member]
-        not_found      – list[str]  (tokens that didn’t resolve)
-    """
     names_for_db, matched_members, not_found = [], [], []
     tokens = re.split(r"[,;\n]+", raw)
 
@@ -99,14 +87,10 @@ async def parse_members(raw: str, guild: discord.Guild):
         else:
             not_found.append(tok)
 
-    # de-dupe db list while preserving order
     names_for_db = list(dict.fromkeys(names_for_db))
     return names_for_db, matched_members, not_found
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                              EVENTS                                 ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 @client.event
 async def on_ready():
     await client.change_presence(
@@ -114,36 +98,29 @@ async def on_ready():
             type=discord.ActivityType.listening, name="commands | !ping"
         )
     )
-    logger.info(f"✅ {client.user} online | {len(client.guilds)} guilds")
+    print(f"{client.user} online | {len(client.guilds)} guilds")
 
 
-# ────────────────────────────  Simple commands  ────────────────────────────
 @client.command()
-async def ping(ctx):  # latency
+async def ping(ctx):  
     await ctx.send(
         embed=discord.Embed(
-            title="🏓 Pong!",
+            title="Pong!",
             description=f"{round(client.latency*1000)} ms",
             color=discord.Color.green(),
         )
     )
 
 
-# ( -- bothelp & !addrole code unchanged -- )
-
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                       NLP / COMMAND ROUTING                         ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 @client.event
 async def on_message(msg: discord.Message):
     if msg.author == client.user:
         return
     await client.process_commands(msg)
     if msg.content.startswith(client.command_prefix):
-        return  # skip explicit commands
+        return  
 
-    # interactive team creation step-by-step
+    
     global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
     if TEAM_CREATION_USER == msg.author and TEAM_CREATION_INDEX < len(
         TEAM_CREATION_FIELDS
@@ -159,7 +136,7 @@ async def on_message(msg: discord.Message):
             TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX = None, {}, 0
         return
 
-    # ML intent
+    
     out = predict(msg.content)
     intent, ent, conf = out["intent"], out["entities"], out["confidence"]
     if intent == "create_team":
@@ -181,14 +158,11 @@ async def on_message(msg: discord.Message):
     elif intent == "get_member_info":
         await handle_member_info(msg, ent)
     elif intent == "greeting" and conf == "high":
-        await msg.channel.send(f"👋 Hello {msg.author.display_name}!")
+        await msg.channel.send(f"Hello {msg.author.display_name}!")
     elif intent == "help" and conf == "high":
         await client.get_command("bothelp").invoke(await client.get_context(msg))
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                 TEAM-CREATION FLOW  (fixed assignment)               ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 async def start_create_team(message):
     global TEAM_CREATION_USER, TEAM_CREATION_INDEX, TEAM_CREATION_DATA
     if TEAM_CREATION_USER:
@@ -203,41 +177,37 @@ async def start_create_team(message):
 async def handle_create_team_interactive(message: discord.Message, data: dict):
     guild = message.guild
     if guild is None:
-        return await message.channel.send("❌ Must be run in a server.")
+        return await message.channel.send("Must be run in a server.")
 
     team_name = data.get("team_name")
     if not team_name:
-        return await message.channel.send("❌ Team name can’t be empty.")
+        return await message.channel.send("Team name can’t be empty.")
     if collection.find_one({"team_name": team_name}):
         return await message.channel.send(f"⚠️ Team **{team_name}** already exists.")
 
-    # ensure full member list is cached
     await guild.chunk()
 
-    # ── member parsing ──
     names_db, matched, not_found = await parse_members(data.get("members", ""), guild)
 
-    # ── role creation / retrieval ──
     role_name = data.get("role")
     role_obj = None
     if role_name and role_name.lower() != "skip":
         role_obj = discord.utils.get(guild.roles, name=role_name)
-        if not role_obj:  # create if missing
+        if not role_obj:  
             try:
                 role_obj = await guild.create_role(
                     name=role_name,
                     colour=discord.Color(random.randint(0, 0xFFFFFF)),
                     reason=f"Auto-created for team {team_name}",
                 )
-                logger.info(f"[TEAM] Created role {role_obj.name}")
+                print(f"[TEAM] Created role {role_obj.name}")
             except discord.Forbidden:
                 await message.channel.send(
-                    "🚫 I don’t have permission to create roles – continuing without role."
+                    "I don’t have permission to create roles – continuing without role."
                 )
             except Exception as exc:
-                logger.error(f"Role create error: {exc}")
+                print(f"Role create error: {exc}")
 
-    # ── role assignment ──
     failed_assign = []
     if role_obj:
         for m in matched:
@@ -247,9 +217,8 @@ async def handle_create_team_interactive(message: discord.Message, data: dict):
                 failed_assign.append(m.display_name)
             except Exception as exc:
                 failed_assign.append(m.display_name)
-                logger.error(f"[TEAM] Add role failed for {m}: {exc}")
+                print(f"[TEAM] Add role failed for {m}: {exc}")
 
-    # ── DB insert ──
     doc = {
         "team_name": team_name,
         "role": role_name or "",
@@ -262,7 +231,6 @@ async def handle_create_team_interactive(message: discord.Message, data: dict):
     }
     collection.insert_one(doc)
 
-    # ── feedback ──
     fields = [
         ("Role", role_name or "N/A", True),
         (
@@ -281,43 +249,17 @@ async def handle_create_team_interactive(message: discord.Message, data: dict):
     await message.channel.send(embed=embed)
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                REMAINING HANDLERS (unchanged)                        ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-# keep your earlier definitions of:
-#   create_server_role, handle_assign_role, handle_update_team_repo, handle_update_team,
-#   handle_show_team_info, handle_remove_member, handle_list_teams, handle_member_info
-
-# ╔═════════════════════════════════════════════════════════════╗
-# ║                EXISTING HANDLERS (unchanged)                ║
-# ╚═════════════════════════════════════════════════════════════╝
-# keep the rest of the original handlers: handle_assign_role, handle_update_team_repo,
-# handle_update_team, handle_show_team_info, handle_remove_member, handle_list_teams,
-# handle_member_info, create_server_role … (the versions from the previous answer)
-
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                    NEW: create_server_role handler                   ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 async def create_server_role(message: discord.Message, entities: dict):
-    """
-    Create a new Discord role on the **current guild**.
-
-    Entities expected:
-        role_name (str, required)
-        colour / color (str, optional)  – hex string like "#ff8800" or "ff8800"
-    """
     guild = message.guild
     if guild is None:
         await message.channel.send("⚠️ Cannot create roles in DMs.")
         return
 
-    # Permission check: member invoking must also have manage_roles (explicit command already has decorator)
     if (
         isinstance(message.author, discord.Member)
         and not message.author.guild_permissions.manage_roles
     ):
-        await message.channel.send("🚫 You don’t have permission to manage roles.")
+        await message.channel.send("You don’t have permission to manage roles.")
         return
 
     role_name = (
@@ -327,10 +269,9 @@ async def create_server_role(message: discord.Message, entities: dict):
     colour_obj = parse_hex_colour(colour_raw) or discord.Color.random()
 
     if not role_name:
-        await message.channel.send("❌ Role name missing – please specify a name.")
+        await message.channel.send("Role name missing – please specify a name.")
         return
 
-    # Does the role already exist?
     existing = discord.utils.find(
         lambda r: r.name.lower() == role_name.lower(), guild.roles
     )
@@ -352,56 +293,44 @@ async def create_server_role(message: discord.Message, entities: dict):
         await message.channel.send(embed=embed)
     except discord.Forbidden:
         await message.channel.send(
-            "🚫 I lack the **Manage Roles** permission or my top role is too low."
+            "I lack the **Manage Roles** permission or my top role is too low."
         )
     except Exception as e:
-        logger.error(f"Error creating role: {e}")
+        print(f"Error creating role: {e}")
         await message.channel.send(
-            f"❌ Unexpected error while creating the role: `{e}`"
+            f"Unexpected error while creating the role: `{e}`"
         )
-
-
-# ──────────────────────────────  EXISTING handlers below (unchanged)  ──────────────────────────────
-# (everything from handle_assign_role through handle_create_team_interactive remains identical)
-# …  ←––– keep the rest of the original file exactly as it was
 
 
 async def handle_assign_role(message, entities):
-    """Handle role assignment intent"""
-    # FIX: Standardize entity names from model
     name = entities.get("member_name") or entities.get("name")
     role = entities.get("role")
     team = entities.get("team_name") or entities.get("team")
 
     if not name:
-        await message.channel.send("❌ Error: Name not provided")
+        await message.channel.send("Error: Name not provided")
         return
 
     if not team:
-        await message.channel.send("❌ Error: Team name not provided")
+        await message.channel.send("Error: Team name not provided")
         return
 
     data = {"name": name, "role": role, "team": team, "updated_at": datetime.now()}
 
     try:
-        # FIX: Find if user exists in the team and update, otherwise add
         existing_member = collection.find_one({"name": name, "team": team})
 
         if existing_member:
-            # Update existing member
             collection.update_one({"name": name, "team": team}, {"$set": data})
         else:
-            # Add to team's members list first
             team_doc = collection.find_one({"team_name": team})
             if team_doc:
                 collection.update_one(
                     {"team_name": team}, {"$addToSet": {"members": name}}
                 )
 
-            # Then add member document
             collection.insert_one(data)
 
-        # Use the new success embed format
         fields = [
             ("Member", name, True),
             ("Role", role if role else "N/A", True),
@@ -415,8 +344,8 @@ async def handle_assign_role(message, entities):
         )
         await message.channel.send(embed=embed)
     except Exception as e:
-        logger.error(f"Error in handle_assign_role: {e}")
-        await message.channel.send(f"❌ Database error: {e}")
+        print(f"Error in handle_assign_role: {e}")
+        await message.channel.send(f"Database error: {e}")
 
 
 async def handle_update_team_repo(message, entities):
@@ -425,7 +354,7 @@ async def handle_update_team_repo(message, entities):
     repo = entities.get("repo")
 
     if not team_name or not repo:
-        await message.channel.send("❌ Team name and repository URL are required.")
+        await message.channel.send("Team name and repository URL are required.")
         return
 
     try:
@@ -435,14 +364,12 @@ async def handle_update_team_repo(message, entities):
         )
 
         if result.modified_count == 0:
-            # Try with "team" field
             result = collection.update_one(
                 {"team": team_name},
                 {"$set": {"repo": repo, "updated_at": datetime.now()}},
             )
 
         if result.modified_count > 0:
-            # Get updated team info
             team_doc = collection.find_one(
                 {"team_name": team_name}
             ) or collection.find_one({"team": team_name})
@@ -457,12 +384,11 @@ async def handle_update_team_repo(message, entities):
         else:
             await message.channel.send(f"⚠️ Team **{team_name}** not found.")
     except Exception as e:
-        logger.error(f"Error in handle_update_team_repo: {e}")
-        await message.channel.send(f"❌ Database error: {e}")
+        print(f"Error in handle_update_team_repo: {e}")
+        await message.channel.send(f"Database error: {e}")
 
 
 async def handle_update_team(message, entities):
-    """Handle updating team details"""
     team_name = entities.get("team_name") or entities.get("team")
 
     if not team_name:
@@ -486,7 +412,7 @@ async def handle_update_team(message, entities):
 
         if field_to_update == "members":
             await message.channel.send(
-                f"Please provide the new list of **members**, separated by commas."
+                "Please provide the new list of **members**, separated by commas."
             )
             try:
                 members_msg = await client.wait_for(
@@ -506,7 +432,6 @@ async def handle_update_team(message, entities):
                     },
                 )
                 if update_result.modified_count > 0:
-                    # Get updated team info for display
                     team_doc = collection.find_one(
                         {"$or": [{"team_name": team_name}, {"team": team_name}]}
                     )
@@ -526,7 +451,7 @@ async def handle_update_team(message, entities):
                         f"⚠️ Could not find team **{team_name}** to update members."
                     )
             except asyncio.TimeoutError:
-                await message.channel.send("❌ Update members timed out.")
+                await message.channel.send("Update members timed out.")
                 return
 
         else:
@@ -551,7 +476,6 @@ async def handle_update_team(message, entities):
                 )
 
                 if result.matched_count:
-                    # Get updated team info for display
                     team_doc = collection.find_one(
                         {"$or": [{"team_name": team_name}, {"team": team_name}]}
                     )
@@ -575,26 +499,23 @@ async def handle_update_team(message, entities):
                         )
                     )
             except asyncio.TimeoutError:
-                await message.channel.send("❌ Update timed out.")
+                await message.channel.send("Update timed out.")
                 return
 
     except asyncio.TimeoutError:
-        await message.channel.send("❌ No field specified to update in time.")
+        await message.channel.send("No field specified to update in time.")
 
 
 async def handle_show_team_info(message, entities):
-    # FIX: Standardize entity names
     team_name = entities.get("team_name") or entities.get("team")
 
     if not team_name:
         await message.channel.send("Please specify the team name.")
         return
 
-    # FIX: First try with "team_name" field
     doc = collection.find_one({"team_name": team_name})
 
     if not doc:
-        # Try with "team" field if not found
         doc = collection.find_one({"team": team_name})
 
     if not doc:
@@ -607,7 +528,6 @@ async def handle_show_team_info(message, entities):
         )
         return
 
-    # FIX: Check if members is in the document
     members_list = doc.get("members", [])
     members = "\n• " + "\n• ".join(members_list) if members_list else "No members"
 
@@ -624,13 +544,7 @@ async def handle_show_team_info(message, entities):
     await message.channel.send(embed=embed)
 
 
-import re
-import discord
-from datetime import datetime
-
-
 async def handle_remove_member(message, entities):
-    # === Backup extractor if NLP misses entities ===
     def extract_entities(text):
         member_pattern = r"(?:remove|delete)\s+([A-Za-z]+)"
         team_pattern = r"from\s+(?:team\s+)?(?:\"([^\"]+)\"|([A-Za-z\s]+))"
@@ -646,7 +560,6 @@ async def handle_remove_member(message, entities):
             "team_name": team_name.strip() if team_name else None,
         }
 
-    # Update missing entities if needed
     if not entities.get("team_name") and not entities.get("team"):
         fallback = extract_entities(message.content)
         entities.update({k: v for k, v in fallback.items() if v})
@@ -663,7 +576,6 @@ async def handle_remove_member(message, entities):
         return
 
     try:
-        # Case-insensitive team search
         team_doc = collection.find_one(
             {
                 "$or": [
@@ -679,7 +591,7 @@ async def handle_remove_member(message, entities):
         )
 
         if not team_doc:
-            await message.channel.send(f"🚫 Team **{team_name}** not found.")
+            await message.channel.send(f"Team **{team_name}** not found.")
             return
 
         if name not in team_doc.get("members", []):
@@ -692,7 +604,6 @@ async def handle_remove_member(message, entities):
             )
             return
 
-        # Proceed with member removal
         result = collection.update_one(
             {"_id": team_doc["_id"]},
             {"$pull": {"members": name}, "$set": {"updated_at": datetime.utcnow()}},
@@ -715,21 +626,18 @@ async def handle_remove_member(message, entities):
             )
 
     except Exception as e:
-        logger.error(f"Error in handle_remove_member: {e}")
-        await message.channel.send(f"❌ Database error: {e}")
+        print(f"Error in handle_remove_member: {e}")
+        await message.channel.send(f"Database error: {e}")
 
 
 async def handle_list_teams(message):
     """Handle listing teams intent"""
     try:
-        # FIX: Try both field names
         teams_from_team_name = list(collection.distinct("team_name"))
         teams_from_team = list(collection.distinct("team"))
 
-        # Combine and filter None values
         team_names = [t for t in teams_from_team_name + teams_from_team if t]
 
-        # Remove duplicates
         team_names = list(set(team_names))
 
         if team_names:
@@ -748,12 +656,11 @@ async def handle_list_teams(message):
                 )
             )
     except Exception as e:
-        logger.error(f"Database error in handle_list_teams: {e}")
-        await message.channel.send(f"❌ Database error: {e}")
+        print(f"Database error in handle_list_teams: {e}")
+        await message.channel.send(f"Database error: {e}")
 
 
 async def handle_member_info(message, entities):
-    # FIX: Standardize entity names
     name = entities.get("member_name") or entities.get("name")
 
     if not name:
@@ -767,7 +674,6 @@ async def handle_member_info(message, entities):
         return
 
     try:
-        # FIX: Get member document
         member_doc = collection.find_one({"name": name})
 
         if member_doc:
@@ -789,8 +695,8 @@ async def handle_member_info(message, entities):
                 )
             )
     except Exception as e:
-        logger.error(f"Database error in handle_member_info: {e}")
-        await message.channel.send(f"❌ Database error: {e}")
+        print(f"Database error in handle_member_info: {e}")
+        await message.channel.send(f"Database error: {e}")
 
 
 client.run(os.getenv("DISCORD_BOT_TOKEN"))
