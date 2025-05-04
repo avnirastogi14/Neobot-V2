@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import logging  # Import the logging module
 import re
 
-load_dotenv(dotenv_path='C:/Users/Hrida/OneDrive/Documents/Desktop/Avni_College/foss_p/tesserx/data.env')
+load_dotenv()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -835,6 +835,39 @@ async def handle_create_team_interactive(message: discord.Message, data: dict):
             except Exception as exc:
                 failed_assign.append(m.display_name)
                 print(f"[TEAM] Add role failed for {m}: {exc}")
+
+    # create channel
+    channel_name = re.sub(r"[^a-z0-9-]", "-", f"team-{team_name.lower()}")[:95]
+
+    channel_obj = discord.utils.get(guild.text_channels, name=channel_name)
+    if channel_obj is None:
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            guild.me: discord.PermissionOverwrite(view_channel=True),
+        }
+
+        if role_obj:
+            overwrites[role_obj] = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True
+            )
+        else:
+            for m in matched:
+                overwrites[m] = discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True, read_message_history=True
+                )
+
+        try:
+            channel_obj = await guild.create_text_channel(
+                channel_name,
+                overwrites=overwrites,
+                reason=f"Private channel for team {team_name}",
+            )
+        except discord.Forbidden:
+            channel_obj = None
+            logger.warning("⚠️  Missing permission to create channels.")
+        except Exception as exc:
+            channel_obj = None
+            logger.error(f"Channel creation error: {exc}")
 
     doc = {
         "team_name": team_name,
