@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from pymongo import MongoClient
-from tmodel import predict,INTENTS_LIST
+from fmodel import predict,INTENTS_LIST
 import asyncio
 import random
 import os
