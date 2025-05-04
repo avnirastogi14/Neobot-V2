@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from pymongo import MongoClient
-from fmodel import predict,INTENTS_LIST
+from fmodel import predict, INTENTS_LIST
 import asyncio
 import random
 import os
@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger("bot2")
 
 # Global variables for team creation process
-TEAM_CREATION_USER = ""
+TEAM_CREATION_USER = None
 TEAM_CREATION_DATA = {}
 TEAM_CREATION_FIELDS = ["team_name", "role", "members", "repo", "status"]
 TEAM_CREATION_INDEX = 0
@@ -63,7 +63,7 @@ async def ping(ctx):
 async def start(ctx):
     """Resumes the bot's message processing."""
     global bot_paused
-    if bot_paused:
+    if 'bot_paused' in globals() and bot_paused:
         bot_paused = False
         await ctx.send("Bot has been resumed. I will now process messages.")
     else:
@@ -90,6 +90,22 @@ async def exit(ctx):
         await ctx.send("⚠️ No command is currently running to exit.")
 
 @client.command()
+async def reset(ctx):
+    """Resets any ongoing team creation process."""
+    global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
+    if ctx.author.guild_permissions.administrator or ctx.author.guild_permissions.manage_guild:
+        old_user = TEAM_CREATION_USER
+        TEAM_CREATION_USER = None
+        TEAM_CREATION_DATA = {}
+        TEAM_CREATION_INDEX = 0
+        if old_user:
+            await ctx.send("✅ Successfully reset the ongoing team creation process.")
+        else:
+            await ctx.send("ℹ️ There was no active team creation process to reset.")
+    else:
+        await ctx.send("⚠️ You need administrator permissions to reset team creation processes.")
+
+@client.command()
 async def bothelp(ctx):
     embed = discord.Embed(
         title="NeoBot Help",
@@ -106,7 +122,6 @@ async def bothelp(ctx):
     • `Show details for team <team>`.
     • `Remove <member> from team <team>`.
     • `List all teams`.
-    • `Show information for <member>`.
     • `Delete team <team>`.
     • `!exit`: To exit from current command.
     • `!bothelp`: Show this help message. """),
@@ -143,7 +158,7 @@ async def on_message(message):
         TEAM_CREATION_INDEX += 1
 
         if TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
-            await message.channel.send(f"Alright, next up: the **{TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]}**? (or type 'skip' to leave empty)")
+            await message.channel.send(f"Alright, next up: the **{TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX].replace('_', ' ')}**? (or type 'skip' to leave empty)")
         else:
             await handle_create_team_interactive(message, TEAM_CREATION_DATA)
             TEAM_CREATION_USER = None
@@ -213,8 +228,6 @@ async def on_message(message):
             await handle_remove_member(message, entities)
         elif intent == "list_teams":
             await handle_list_teams(message)
-        elif intent == "get_member_info":
-            await handle_member_info(message, entities)
         elif intent == "create_team":
             logger.info("Calling start_create_team function.")
             await start_create_team(message)
@@ -225,20 +238,6 @@ async def on_message(message):
             await message.channel.send(random.choice(greetings))
     finally:
         IS_COMMAND_RUNNING = False
-
-async def create_success_embed(title, description, fields=None):
-    """Create a consistent success embed."""
-    embed = discord.Embed(
-        title=f"✅ {title}",
-        description=description,
-        color=discord.Color.green()
-    )
-    if fields:
-        for name, value, inline in fields:
-            if value:
-                embed.add_field(name=name, value=value, inline=inline)
-    embed.timestamp = datetime.now()
-    return embed
 
 async def handle_assign_role(message, entities):
     """Handle role assignment intent."""
@@ -257,7 +256,7 @@ async def handle_assign_role(message, entities):
         "name": name,
         "role": role,
         "team": team,
-        "updated_at": datetime.datetime.now()
+        "updated_at": datetime.now()
     }
 
     try:
@@ -294,10 +293,13 @@ async def handle_assign_role(message, entities):
         logger.error(f"Error in handle_assign_role: {e}")
         await message.channel.send(f"❌ Database error: {e}")
 
+from datetime import datetime
+import re
+
 async def handle_update_team_repo(message, entities):
     """Handle updating team repo URL."""
-    team_name = entities.get("team_name") or entities.get("team")
-    repo = entities.get("repo")
+    team_name = (entities.get("team_name") or entities.get("team") or "").strip()
+    repo = (entities.get("repo") or "").strip()
 
     if not team_name:
         await message.channel.send("⚠️ Please specify the team name to update the repository for.")
@@ -307,23 +309,30 @@ async def handle_update_team_repo(message, entities):
         return
 
     try:
+        # Case-insensitive search
         result = collection.update_one(
-            {"$or": [{"team_name": team_name}, {"team": team_name}]},
-            {"$set": {"repo": repo, "updated_at": datetime.datetime.now()}}
+            {
+                "$or": [
+                    {"team_name": re.compile(f"^{re.escape(team_name)}$", re.IGNORECASE)},
+                    {"team": re.compile(f"^{re.escape(team_name)}$", re.IGNORECASE)}
+                ]
+            },
+            {"$set": {"repo": repo, "updated_at": datetime.utcnow()}}
         )
+
         if result.modified_count > 0:
             fields = [
                 ("Team", team_name, True),
                 ("Repository", repo, False)
             ]
             embed = await create_success_embed(
-                "Repository Updated",
+                "✅ Repository Updated",
                 f"The repository URL for **{team_name}** has been updated.",
                 fields
             )
             await message.channel.send(embed=embed)
         else:
-            await message.channel.send(f"⚠️ Could not find team **{team_name}**.")
+            await message.channel.send(f"⚠️ No matching team found with the name **{team_name}**.")
     except Exception as e:
         logger.error(f"Error in handle_update_team_repo: {e}")
         await message.channel.send(f"❌ Database error: {e}")
@@ -345,7 +354,7 @@ async def handle_update_team_members(message, entities):
     try:
         result = collection.update_one(
             {"$or": [{"team_name": team_name}, {"team": team_name}]},
-            {"$set": {"members": members_list, "updated_at": datetime.datetime.utcnow()}}
+            {"$set": {"members": members_list, "updated_at": datetime.utcnow()}}
         )
         if result.modified_count > 0:
             fields = [
@@ -364,10 +373,13 @@ async def handle_update_team_members(message, entities):
         logger.error(f"Error in handle_update_team_members: {e}")
         await message.channel.send(f"❌ Database error: {e}")
 
+from datetime import datetime
+import re
+
 async def handle_update_team_status(message, entities):
     """Handle updating team status directly."""
-    team_name = entities.get("team_name") or entities.get("team")
-    status = entities.get("status")
+    team_name = (entities.get("team_name") or entities.get("team") or "").strip()
+    status = (entities.get("status") or "").strip()
 
     if not team_name:
         await message.channel.send("⚠️ Which team's status do you want to update?")
@@ -377,23 +389,27 @@ async def handle_update_team_status(message, entities):
         return
 
     try:
+        # Case-insensitive search using regex
         result = collection.update_one(
-            {"$or": [{"team_name": team_name}, {"team": team_name}]},
-            {"$set": {"status": status, "updated_at": datetime.datetime.utcnow()}}
+            {
+                "$or": [
+                    {"team_name": re.compile(f"^{re.escape(team_name)}$", re.IGNORECASE)},
+                    {"team": re.compile(f"^{re.escape(team_name)}$", re.IGNORECASE)}
+                ]
+            },
+            {"$set": {"status": status, "updated_at": datetime.utcnow()}}
         )
+
         if result.modified_count > 0:
-            fields = [
-                ("Team", team_name, True),
-                ("Status", status, True)
-            ]
+            fields = [("Team", team_name, True), ("Status", status, True)]
             embed = await create_success_embed(
-                "Team Status Updated",
+                "✅ Team Status Updated",
                 f"The status for **{team_name}** has been updated to **{status}**.",
                 fields
             )
             await message.channel.send(embed=embed)
         else:
-            await message.channel.send(f"⚠️ Could not find team **{team_name}**.")
+            await message.channel.send(f"⚠️ No matching team found with the name **{team_name}**.")
     except Exception as e:
         logger.error(f"Error in handle_update_team_status: {e}")
         await message.channel.send(f"❌ Database error: {e}")
@@ -413,7 +429,7 @@ async def handle_update_team_role(message, entities):
     try:
         result = collection.update_one(
             {"$or": [{"team_name": team_name}, {"team": team_name}]},
-            {"$set": {"role": role, "updated_at": datetime.datetime.utcnow()}}
+            {"$set": {"role": role, "updated_at": datetime.utcnow()}}
         )
         if result.modified_count > 0:
             fields = [
@@ -570,45 +586,6 @@ async def handle_list_teams(message):
         logger.error(f"Error in handle_list_teams: {e}")
         await message.channel.send(f"❌ Database error: {e}")
 
-async def handle_member_info(message, entities):
-    """Handle showing information for a specific member."""
-    name = entities.get("member_name") or entities.get("name")
-
-    if not name:
-        await message.channel.send("⚠️ Please specify the name of the member you want information for.")
-        return
-
-    try:
-        member_doc = collection.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
-
-        if member_doc:
-            embed = discord.Embed(
-                title=f"Information for {member_doc.get('name')}",
-                color=discord.Color.blue()
-            )
-            if "role" in member_doc:
-                embed.add_field(name="Role", value=member_doc["role"], inline=True)
-            if "team" in member_doc:
-                embed.add_field(name="Team", value=member_doc["team"], inline=True)
-            embed.set_footer(text="Member information fetched from the database")
-            await message.channel.send(embed=embed)
-        else:
-            await message.channel.send(f"⚠️ No information found for member **{name}**.")
-    except Exception as e:
-        logger.error(f"Error in handle_member_info: {e}")
-        await message.channel.send(f"❌ Database error: {e}")
-
-async def start_create_team(message):
-    """Starts the interactive team creation process."""
-    global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
-    if TEAM_CREATION_USER is not None:
-        await message.channel.send("⏳ A team creation process is already underway. Please finish that first or type `!exit` to cancel.")
-        return
-    TEAM_CREATION_USER = message.author
-    TEAM_CREATION_DATA = {}
-    TEAM_CREATION_INDEX = 0
-    await message.channel.send(f"Alright, let's get a new team set up! First, what will be the **{TEAM_CREATION_FIELDS[0].replace('_', ' ')}**?")
-
 async def handle_delete_team(message, entities):
     """Handle deleting a team from the database."""
     team_name = entities.get("team_name") or entities.get("team")
@@ -637,8 +614,27 @@ async def handle_delete_team(message, entities):
         logger.error(f"Error deleting team {team_name}: {e}")
         await message.channel.send(f"❌ Database error while deleting the team: {e}")
 
-async def handle_create_team_interactive(message, team_data):
+async def create_success_embed(title: str, description: str, fields: list = []) -> discord.Embed:
+    """Creates a standard success embed."""
+    embed = discord.Embed(title=title, description=description, color=discord.Color.green())
+    for name, value, inline in fields:
+        embed.add_field(name=name, value=value, inline=inline)
+    return embed
+
+async def start_create_team(message: discord.Message):
+    """Starts the interactive team creation process."""
+    global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
+    if TEAM_CREATION_USER is not None:
+        await message.channel.send("⏳ A team creation process is already underway. Please finish that first or type `!exit` to cancel.")
+        return
+    TEAM_CREATION_USER = message.author
+    TEAM_CREATION_DATA = {}
+    TEAM_CREATION_INDEX = 0
+    await message.channel.send(f"Alright, let's get a new team set up! First, what will be the **{TEAM_CREATION_FIELDS[0].replace('_', ' ')}**?")
+
+async def handle_create_team_interactive(message: discord.Message, team_data: dict):
     """Handles the interactive creation of a new team."""
+    global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
     team_name = team_data.get("team_name")
     role = team_data.get("role")
     members_str = team_data.get("members")
@@ -646,11 +642,19 @@ async def handle_create_team_interactive(message, team_data):
     status = team_data.get("status")
 
     if not team_name:
-        await message.channel.send("A team needs a name! Let's try again.")
+        await message.channel.send("A team needs a name! Let's try again from the beginning.")
+        TEAM_CREATION_USER = message.author
+        TEAM_CREATION_DATA = {}
+        TEAM_CREATION_INDEX = 0
+        await message.channel.send(f"Alright, let's get a new team set up! First, what will be the **{TEAM_CREATION_FIELDS[0].replace('_', ' ')}**?")
         return
 
     if collection.find_one({"team_name": team_name}):
         await message.channel.send(f"A team with the name **{team_name}** already exists. Please choose a different name.")
+        TEAM_CREATION_USER = message.author
+        TEAM_CREATION_DATA = {}
+        TEAM_CREATION_INDEX = 0
+        await message.channel.send(f"Alright, let's get a new team set up! First, what will be the **{TEAM_CREATION_FIELDS[0].replace('_', ' ')}**?")
         return
 
     members = [member.strip() for member in members_str.split(',')] if members_str and members_str.lower() != "skip" else []
@@ -661,27 +665,42 @@ async def handle_create_team_interactive(message, team_data):
         "members": members,
         "repo": repo if repo and repo.lower() != "skip" else "",
         "status": status if status and status.lower() != "skip" else "",
-        "created_at": datetime.datetime.now()
+        "created_at": datetime.now()
     }
 
     try:
         collection.insert_one(team_info)
 
         fields = [
-            ("Role", team_info["role"] if team_info["role"] else "N/A", True),
-            ("Status", team_info["status"] if team_info["status"] else "N/A", True),
-            ("Repository", team_info["repo"] if team_info["repo"] else "N/A", False),
-            ("Members", "\n• " + "\n• ".join(members) if members else "No members yet", False)
-        ]
+                ("Role", team_info["role"] if team_info["role"] else "N/A", True),
+                ("Status", team_info["status"] if team_info["status"] else "N/A", True),
+                ("Repository", team_info["repo"] if team_info["repo"] else "N/A", False),
+                ("Members", "\n• " + "\n• ".join(members) if members else "No members yet", False)
+            ]
 
         embed = await create_success_embed(
-            "Team Created!",
-            f"The team **{team_name}** has been successfully created!",
-            fields
-        )
-        await message.channel.send(embed=embed)
+                "Team Created!",
+                f"The team **{team_name}** has been successfully created!",
+                fields
+            )
+        await message.channel.send(embed=embed) # <---- THIS IS WHERE THE MESSAGE IS SENT
     except Exception as e:
         logger.error(f"Error creating team {team_name}: {e}")
         await message.channel.send(f"❌ Oops! There was an issue creating the team: {e}")
+    finally:
+        TEAM_CREATION_USER = None
+        TEAM_CREATION_DATA = {}
+        TEAM_CREATION_INDEX = 0
+
+async def handle_exit_command(message: discord.Message):
+    """Handles cancellation of the team creation process."""
+    global TEAM_CREATION_USER, TEAM_CREATION_DATA, TEAM_CREATION_INDEX
+    if TEAM_CREATION_USER == message.author:
+        TEAM_CREATION_USER = None
+        TEAM_CREATION_DATA = {}
+        TEAM_CREATION_INDEX = 0
+        await message.channel.send("🚪 Team creation process has been cancelled.")
+    else:
+        await message.channel.send("❌ You are not the one currently creating a team.")
 
 client.run(os.getenv('DISCORD_BOT_TOKEN'))
