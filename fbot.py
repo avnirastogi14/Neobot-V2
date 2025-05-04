@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from pymongo import MongoClient
-from fmodel import predict, INTENTS_LIST
+from tmodel import predict, INTENTS_LIST
 import asyncio
 import random
 import os
@@ -138,106 +138,110 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    if message.content.lower() == "!exit" and IS_COMMAND_RUNNING:
-        IS_COMMAND_RUNNING = False
-        await message.channel.send("⌚❌ Exiting current operation - Execution Aborted!")
-        TEAM_CREATION_USER = None
-        TEAM_CREATION_DATA = {}
-        TEAM_CREATION_INDEX = 0
-        return
+    # Check if the bot is mentioned
+    if client.user.mentioned_in(message):
+        text = re.sub(r'<@!?\d+>', '', message.content).strip()  # Clean the message
 
-    await client.process_commands(message)
-
-    if message.content.startswith(client.command_prefix):
-        return
-
-    # Check for ongoing team creation process
-    if TEAM_CREATION_USER == message.author and TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
-        field = TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]
-        TEAM_CREATION_DATA[field] = message.content
-        TEAM_CREATION_INDEX += 1
-
-        if TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
-            await message.channel.send(f"Alright, next up: the **{TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX].replace('_', ' ')}**? (or type 'skip' to leave empty)")
-        else:
-            await handle_create_team_interactive(message, TEAM_CREATION_DATA)
+        if text.lower() == "!exit" and IS_COMMAND_RUNNING:
+            IS_COMMAND_RUNNING = False
+            await message.channel.send("⌚❌ Exiting current operation - Execution Aborted!")
             TEAM_CREATION_USER = None
             TEAM_CREATION_DATA = {}
             TEAM_CREATION_INDEX = 0
-        return
-
-    # Cache to avoid repeat processing
-    cache_key = f"{message.channel.id}:{message.id}"
-    if not hasattr(client, 'processed_messages'):
-        client.processed_messages = set()
-    if cache_key in client.processed_messages:
-        return
-    client.processed_messages.add(cache_key)
-    if len(client.processed_messages) > 100:
-        client.processed_messages = set(list(client.processed_messages)[-80:])
-
-    if message.author == client.user:
-        return
-
-    # ML Prediction
-    try:
-        prediction_result = predict(message.content)
-        intent = prediction_result.get("intent")
-        entities = prediction_result.get("entities", {})
-        confidence = prediction_result.get("confidence", "low")
-        logger.info(f"Intent predicted: {intent}, Entities: {entities}, Confidence: {confidence}")
-
-        if intent == "help" and confidence == "high":
-            await client.get_command('bothelp').invoke(await client.get_context(message))
             return
-        elif intent == "exit" and confidence == "high":
-            await message.channel.send("⌚❌ Exiting Command - Command Aborted!")
-            return
-        elif not intent or intent == "unknown" or confidence == "low":
-            # Provide a more helpful "unknown command" response
-            responses = [
-                "Hmm, I'm not quite sure what you're asking. Could you rephrase?",
-                "Sorry, I didn't understand that command. Try `!bothelp` for available commands.",
-                "That's an interesting request! However, I don't have a function for that yet. Check `!bothelp`.",
-                "My apologies, but I couldn't process your request. Please see `!bothelp` for guidance.",
-                "Could you please clarify your command? I might have misunderstood. `!bothelp` lists what I can do."
-            ]
-            await message.channel.send(random.choice(responses))
-            return
-    except Exception as e:
-        await message.channel.send(f"❌ Prediction error: `{str(e)}`")
-        return
 
-    logger.info(f"Handling intent: {intent} with entities: {entities}")
-    IS_COMMAND_RUNNING = True
+        await client.process_commands(message)  # Still process commands (e.g., !ping)
 
-    try:
-        if intent == "assign_role":
-            await handle_assign_role(message, entities)
-        elif intent == "update_team_repo":
-            await handle_update_team_repo(message, entities)
-        elif intent == "update_team_members":  # New intent for updating members directly
-            await handle_update_team_members(message, entities)
-        elif intent == "update_team_status":  # New intent for updating status directly
-            await handle_update_team_status(message, entities)
-        elif intent == "update_team_role":  # New intent for updating team's overall role (if applicable)
-            await handle_update_team_role(message, entities)
-        elif intent == "show_team_info":
-            await handle_show_team_info(message, entities)
-        elif intent == "remove_member":
-            await handle_remove_member(message, entities)
-        elif intent == "list_teams":
-            await handle_list_teams(message)
-        elif intent == "create_team":
-            logger.info("Calling start_create_team function.")
-            await start_create_team(message)
-        elif intent == "delete_team":
-            await handle_delete_team(message, entities)
-        elif intent == "greeting" and confidence == "high":
-            greetings = [f"👋 Hello {message.author.display_name}!", f"Hey there, {message.author.display_name}!", f"Greetings, {message.author.display_name}!"]
-            await message.channel.send(random.choice(greetings))
-    finally:
-        IS_COMMAND_RUNNING = False
+        if text.startswith(client.command_prefix):
+            return
+
+        # Check for ongoing team creation process
+        if TEAM_CREATION_USER == message.author and TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
+            field = TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX]
+            TEAM_CREATION_DATA[field] = text  # Use the cleaned text
+            TEAM_CREATION_INDEX += 1
+
+            if TEAM_CREATION_INDEX < len(TEAM_CREATION_FIELDS):
+                await message.channel.send(f"Alright, next up: the **{TEAM_CREATION_FIELDS[TEAM_CREATION_INDEX].replace('_', ' ')}**? (or type 'skip' to leave empty)")
+            else:
+                await handle_create_team_interactive(message, TEAM_CREATION_DATA)
+                TEAM_CREATION_USER = None
+                TEAM_CREATION_DATA = {}
+                TEAM_CREATION_INDEX = 0
+            return
+
+        # Cache to avoid repeat processing (keep this)
+        cache_key = f"{message.channel.id}:{message.id}"
+        if not hasattr(client, 'processed_messages'):
+            client.processed_messages = set()
+        if cache_key in client.processed_messages:
+            return
+        client.processed_messages.add(cache_key)
+        if len(client.processed_messages) > 100:
+            client.processed_messages = set(list(client.processed_messages)[-80:])
+
+        # ML Prediction
+        try:
+            prediction_result = predict(text)  # Use the cleaned text
+            intent = prediction_result.get("intent")
+            entities = prediction_result.get("entities", {})
+            confidence = prediction_result.get("confidence", "low")
+            logger.info(f"Intent predicted: {intent}, Entities: {entities}, Confidence: {confidence}")
+
+            if intent == "help" and confidence == "high":
+                await client.get_command('bothelp').invoke(await client.get_context(message))
+                return
+            elif intent == "exit" and confidence == "high":
+                await message.channel.send("⌚❌ Exiting Command - Command Aborted!")
+                return
+            elif not intent or intent == "unknown" or confidence == "low":
+                # Provide a more helpful "unknown command" response
+                responses = [
+                    "Hmm, I'm not quite sure what you're asking. Could you rephrase?",
+                    "Sorry, I didn't understand that command. Try `!bothelp` for available commands.",
+                    "That's an interesting request! However, I don't have a function for that yet. Check `!bothelp`.",
+                    "My apologies, but I couldn't process your request. Please see `!bothelp` for guidance.",
+                    "Could you please clarify your command? I might have misunderstood. `!bothelp` lists what I can do."
+                ]
+                await message.channel.send(random.choice(responses))
+                return
+        except Exception as e:
+            await message.channel.send(f"❌ Prediction error: `{str(e)}`")
+            return
+
+        logger.info(f"Handling intent: {intent} with entities: {entities}")
+        IS_COMMAND_RUNNING = True
+
+        try:
+            # ... (your intent handling logic remains the same)
+            if intent == "assign_role":
+                await handle_assign_role(message, entities)
+            elif intent == "update_team_repo":
+                await handle_update_team_repo(message, entities)
+            elif intent == "update_team_members":
+                await handle_update_team_members(message, entities)
+            elif intent == "update_team_status":
+                await handle_update_team_status(message, entities)
+            elif intent == "update_team_role":
+                await handle_update_team_role(message, entities)
+            elif intent == "show_team_info":
+                await handle_show_team_info(message, entities)
+            elif intent == "remove_member":
+                await handle_remove_member(message, entities)
+            elif intent == "list_teams":
+                await handle_list_teams(message)
+            elif intent == "create_team":
+                logger.info("Calling start_create_team function.")
+                await start_create_team(message)
+            elif intent == "delete_team":
+                await handle_delete_team(message, entities)
+            elif intent == "greeting" and confidence == "high":
+                greetings = [f"👋 Hello {message.author.display_name}!", f"Hey there, {message.author.display_name}!", f"Greetings, {message.author.display_name}!"]
+                await message.channel.send(random.choice(greetings))
+        finally:
+            IS_COMMAND_RUNNING = False
+    else:
+        await client.process_commands(message) # Allow regular commands (!ping, !help) to work even without a mention
 
 async def handle_assign_role(message, entities):
     """Handle role assignment intent."""
