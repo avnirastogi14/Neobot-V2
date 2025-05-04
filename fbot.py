@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from pymongo import MongoClient
-from fmodel import predict, INTENTS_LIST  # Assuming your model still outputs this
+from tmodel import predict,INTENTS_LIST
 import asyncio
 import random
 import os
@@ -58,6 +58,23 @@ async def ping(ctx):
     )
     embed.set_footer(text=f"Requested by {ctx.author.display_name}")
     await ctx.send(embed=embed)
+
+@client.command()
+async def start(ctx):
+    """Resumes the bot's message processing."""
+    global bot_paused
+    if bot_paused:
+        bot_paused = False
+        await ctx.send("Bot has been resumed. I will now process messages.")
+    else:
+        await ctx.send("Bot is already running.")
+
+@client.command()
+async def end(ctx):
+    """Pauses the bot, ignoring new messages."""
+    global bot_paused
+    bot_paused = True
+    await ctx.send("Bot has been paused. I will not process new messages until '!start' is used.")
 
 @client.command()
 async def exit(ctx):
@@ -206,7 +223,6 @@ async def on_message(message):
         elif intent == "greeting" and confidence == "high":
             greetings = [f"👋 Hello {message.author.display_name}!", f"Hey there, {message.author.display_name}!", f"Greetings, {message.author.display_name}!"]
             await message.channel.send(random.choice(greetings))
-        # You can add more intent handling here as needed
     finally:
         IS_COMMAND_RUNNING = False
 
