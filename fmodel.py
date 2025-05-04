@@ -182,22 +182,30 @@ def predict(user_input):
                 "processing_time": time.time() - start_time
             }
 
+        # FIX: Prioritize "create team [team_name]" detection
+        create_team_match = re.search(r"(?i)(create|make|new|add)\s+(?:new\s+)?team(?:,\s+)?([A-Za-z0-9_.-]+)", cleaned_input)
+        if create_team_match:
+            return {
+                "intent": "create_team",
+                "entities": {"team_name": create_team_match.group(2).strip()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+        create_team_simple_match = re.search(r"(?i)(create|make|new|add)\s+(?:a\s+)?(?:new\s+)?team\b", cleaned_input)
+        if create_team_simple_match:
+            return {
+                "intent": "create_team",
+                "entities": {},
+                "confidence": "medium", # Lower confidence as no team name is provided
+                "processing_time": time.time() - start_time
+            }
+
         # FIX: Prioritize "show team [team_name]" for "show_team_info"
         show_team_match = re.search(r"(?i)^(?:show\s+)?team\s+([A-Za-z][a-zA-Z0-9_.-]+)$", cleaned_input)
         if show_team_match:
             return {
                 "intent": "show_team_info",
                 "entities": {"team_name": show_team_match.group(1).strip()},
-                "confidence": "high",
-                "processing_time": time.time() - start_time
-            }
-
-        # FIX: Better detection of "create_team" intent
-        create_team_match = re.search(r"(?i)(create|make|new)\s+(?:new\s+)?team(?:,\s+)?([A-Za-z0-9_.-]+)", cleaned_input)
-        if create_team_match:
-            return {
-                "intent": "create_team",
-                "entities": {"team_name": create_team_match.group(2).strip()},
                 "confidence": "high",
                 "processing_time": time.time() - start_time
             }
@@ -297,8 +305,8 @@ def predict(user_input):
                 "processing_time": time.time() - start_time
             }
 
-        # Try to infer "update_team" for "update repo of [team] to [url]"
-        update_repo_match = re.search(r"(?i)update\s+repo\s+of\s+([A-Za-z0-9_.-]+)\s+to\s+(\S+)", cleaned_input)
+        # FIX: More specific patterns for "update_team"
+        update_repo_match = re.search(r"(?i)update\s+repo\s+of\s+team\s+([A-Za-z0-9_.-]+)\s+to\s+(\S+)", cleaned_input)
         if update_repo_match:
             return {
                 "intent": "update_team",
@@ -310,8 +318,7 @@ def predict(user_input):
                 "processing_time": time.time() - start_time
             }
 
-        # Try to infer "update_team" for "update [field] of [team] to [value]"
-        update_field_match = re.search(r"(?i)update\s+(role|repo|status)\s+of\s+([A-Za-z0-9_.-]+)\s+to\s+(\S+)", cleaned_input)
+        update_field_match = re.search(r"(?i)update\s+(role|status)\s+of\s+team\s+([A-Za-z0-9_.-]+)\s+to\s+(\S+)", cleaned_input)
         if update_field_match:
             return {
                 "intent": "update_team",
@@ -335,8 +342,8 @@ def predict(user_input):
                 "confidence": "high",
                 "processing_time": time.time() - start_time
             }
-        
-        # Process the results
+
+        # Process the results from the zero-shot classifier
         confidence = estimate_intent_confidence(confidence_scores)
 
         # Return the final result
@@ -377,18 +384,20 @@ if __name__ == "__main__":
         "Assign John as developer in team Alpha",
         "Make Sarah lead developer in Bravo",
         "Who are the members of team Alpha?",
-        "Update repo of Alpha to https://github.com/company/alpha-project",
-        "Update status of Bravo to inactive",
+        "Update repo of team Alpha to https://github.com/company/alpha-project",
+        "Update status of team Bravo to inactive",
         "Remove Alex from team Delta",
         "List all teams",
         "What role does John have?",
         "Hello there",
         "Help me use this system",
         "Set role of Mary as QA engineer in team Echo",
-        "Update role of Zeta to Senior Developer",
+        "Update role of team Zeta to Senior Developer",
         "show team Cosmic Creators",  # Test case for showing team info
         "delete team Avengers",      # Test case for deleting a team
-        "remove team Innovators"     # Test case for deleting a team using remove
+        "remove team Innovators",    # Test case for deleting a team using remove
+        "add team Galactic",        # test case to add team using add
+        "create team Nebula"         # test case to add team
     ]
 
     print("Running test cases:")
