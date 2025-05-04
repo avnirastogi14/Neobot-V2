@@ -1,3 +1,4 @@
+
 from transformers import pipeline
 import re
 import logging
@@ -182,6 +183,403 @@ def predict(user_input):
                 "processing_time": time.time() - start_time
             }
 
+        # --- SHOW TEAM INFO (PRIORITY) ---
+        show_team_match = re.search(
+            r"(?i)^(?:show\s+)?team\s+([A-Za-z][a-zA-Z0-9_.-]+)$", cleaned_input
+        )
+        if show_team_match:
+            return {
+                "intent": "show_team_info",
+                "entities": {"team_name": show_team_match.group(1).strip()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time,
+            }
+
+        # Prioritize "assign role" detection with a clearer pattern
+        assign_role_pattern = re.search(r"(?i)(?:assign|set)\s+([a-zA-Z0-9_.-]+)\s+role\s+(?:to\s+)?([a-zA-Z0-9_.-]+)(?:\s+in\s+team\s+([A-Za-z0-9_.-]+))?", cleaned_input)
+        if assign_role_pattern:
+            entities = {"name": assign_role_pattern.group(2), "role": assign_role_pattern.group(1), "team_name": assign_role_pattern.group(3)}
+            return {
+                "intent": "assign_role",
+                "entities": {k: v.strip() if v else None for k, v in entities.items()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        assign_role_pattern_alt = re.search(r"(?i)(?:assign|set)\s+role\s+([a-zA-Z0-9_.-]+)\s+(?:to\s+)?([a-zA-Z0-9_.-]+)(?:\s+in\s+team\s+([A-Za-z0-9_.-]+))?", cleaned_input)
+        if assign_role_pattern_alt:
+            entities = {"name": assign_role_pattern_alt.group(3), "role": assign_role_pattern_alt.group(2), "team_name": assign_role_pattern_alt.group(4)}
+            return {
+                "intent": "assign_role",
+                "entities": {k: v.strip() if v else None for k, v in entities.items()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # FIX: Prioritize "create team [team_name]" detection
+        create_team_match = re.search(r"(?i)(create|make|new|add)\s+(?:new\s+)?team(?:,\s+)?([A-Za-z0-9_.-]+)", cleaned_input)
+        if create_team_match:
+            return {
+                "intent": "create_team",
+                "entities": {"team_name": create_team_match.group(2).strip()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+        create_team_simple_match = re.search(r"(?i)(create|make|new|add)\s+(?:a\s+)?(?:new\s+)?team\b", cleaned_input)
+        if create_team_simple_match:
+            return {
+                "intent": "create_team",
+                "entities": {},
+                "confidence": "medium", # Lower confidence as no team name is provided
+                "processing_time": time.time() - start_time
+            }
+
+        # FIX: Detect "delete team" intent
+        delete_team_match = re.search(r"(?i)(delete|remove)\s+team\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        if delete_team_match:
+            return {
+                "intent": "delete_team",
+                "entities": {"team_name": delete_team_match.group(2).strip()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+        delete_single_team_match = re.search(r"(?i)delete\s+([A-Za-z0-9_.-]+)\s+team", cleaned_input)
+        if delete_single_team_match:
+            return {
+                "intent": "delete_team",
+                "entities": {"team_name": delete_single_team_match.group(1).strip()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # Check for member info requests
+        member_info_match = re.search(r"(?i)info\s+(?:about|on)\s+([a-zA-Z0-9_.-]+)", cleaned_input)
+        if member_info_match:
+            return {
+                "intent": "get_member_info",
+                "entities": {
+                    "name": member_info_match.group(1)
+                },
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # Try to infer "assign_role" if the pattern "make [name] [role] in [team]" is found
+        make_role_match = re.search(r"(?i)make\s+([a-zA-Z0-9_.-]+)\s+([a-zA-Z\s]+)\s+in\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        if make_role_match:
+            return {
+                "intent": "assign_role",
+                "entities": {
+                    "name": make_role_match.group(1),
+                    "role": make_role_match.group(2).strip(),
+                    "team_name": make_role_match.group(3)
+                },
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # Try to infer "assign_role" if the pattern "assign [name] [role] to [team]" is found
+        assign_to_match = re.search(r"(?i)assign\s+([a-zA-Z0-9_.-]+)\s+([a-zA-Z\s]+)\s+to\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        if assign_to_match:
+            return {
+                "intent": "assign_role",
+                "entities": {
+                    "name": assign_to_match.group(1),
+                    "role": assign_to_match.group(2).strip(),
+                    "team_name": assign_to_match.group(3)
+                },
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # Try to infer "set role of [name] as [role] in [team]"
+        set_role_match = re.search(r"(?i)set\s+role\s+of\s+([a-zA-Z0-9_.-]+)\s+as\s+([a-zA-Z\s]+)\s+in\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        if set_role_match:
+            return {
+                "intent": "assign_role",
+                "entities": {
+                    "name": set_role_match.group(1),
+                    "role": set_role_match.group(2).strip(),
+                    "team_name": set_role_match.group(3)
+                },
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # FIX: More specific patterns for "update_team"
+        update_repo_match = re.search(r"(?i)update\s+repo\s+of\s+team\s+([A-Za-z0-9_.-]+)\s+to\s+(\S+)", cleaned_input)
+        if update_repo_match:
+            return {
+                "intent": "update_team",
+                "entities": {
+                    "team_name": update_repo_match.group(1),
+                    "repo": update_repo_match.group(2)
+                },
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        update_field_match = re.search(r"(?i)update\s+(role|status)\s+of\s+team\s+([A-Za-z0-9_.-]+)\s+to\s+(\S+)", cleaned_input)
+        if update_field_match:
+            return {
+                "intent": "update_team",
+                "entities": {
+                    "field": update_field_match.group(1),
+                    "team_name": update_field_match.group(2),
+                    "value": update_field_match.group(3)
+                },
+                "confidence": "medium",
+                "processing_time": time.time() - start_time
+            }
+
+        # Process the results from the zero-shot classifier (Fallback)
+        intent_result = classifier(cleaned_input, candidate_labels=INTENTS_LIST)
+        predicted_intent = intent_result["labels"][0]
+        confidence_scores = intent_result["scores"]
+
+        # Extract entities
+        ner_results = ner(cleaned_input)
+
+        # Add a safety check here to ensure ner_results is a list
+        if not isinstance(ner_results, list):
+            logger.error(f"NER pipeline returned unexpected type: {type(ner_results)}, input: '{cleaned_input}'")
+            extracted_entities = {} # Assign an empty dictionary in case of error
+        else:
+            extracted_entities = extract_entities(ner_results, cleaned_input)
+
+        # FIX: Log the extracted entities to help with debugging
+        logger.info(f"Extracted entities: {extracted_entities}")
+
+        # Domain-specific post-processing based on intent
+        if predicted_intent == "list_teams" and extracted_entities.get("team_name"):
+            predicted_intent = "show_team_info"  # If team is mentioned in list_teams, it's likely show_team_info
+
+        if predicted_intent == "assign_role" and not extracted_entities.get("name") and not extracted_entities.get("role") and extracted_entities.get("team_name"):
+            # Might be asking about team info if only team name is present
+            if re.search(r"(?i)\b(what are|who is in|members of)\b", cleaned_input):
+                predicted_intent = "show_team_info"
+
+        if predicted_intent == "assign_role" and not extracted_entities.get("team_name") and extracted_entities.get("name") and extracted_entities.get("role"):
+            # Inferring context - assigning role to a member, need team
+            pass # Keep as assign_role, handler will ask for team if needed
+
+        # Improve detection of member removal
+        if re.search(r"(?i)\b(remove|delete|kick|eliminate)\b", cleaned_input) and extracted_entities.get("name"):
+            predicted_intent = "remove_member"
+
+        # Try to infer "assign_role" if the pattern "make [name] [role] in [team]" is found
+        make_role_match = re.search(r"(?i)make\s+([a-zA-Z0-9_.-]+)\s+([a-zA-Z\s]+)\s+in\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        if make_role_match:
+            return {
+                "intent": "assign_role",
+                "entities": {
+                    "name": make_role_match.group(1),
+                    "role": make_role_match.group(2).strip(),
+                    "team_name": make_role_match.group(3)
+                },
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # Try to infer "assign_role" if the pattern "assign [name] [role] to [team]" is found
+        assign_to_match = re.search(r"(?i)assign\s+([a-zA-Z0-9_.-]+)\s+([a-zA-Z\s]+)\s+to\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        if assign_to_match:
+            return {
+                "intent": "assign_role",
+                "entities": {
+                    "name": assign_to_match.group(1),
+                    "role": assign_to_match.group(2).strip(),
+                    "team_name": assign_to_match.group(3)
+                },
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # Try to infer "set role of [name] as [role] in [team]"
+        set_role_match = re.search(r"(?i)set\s+role\s+of\s+([a-zA-Z0-9_.-]+)\s+as\s+([a-zA-Z\s]+)\s+in\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        if set_role_match:
+            return {
+                "intent": "assign_role",
+                "entities": {
+                    "name": set_role_match.group(1),
+                    "role": set_role_match.group(2).strip(),
+                    "team_name": set_role_match.group(3)
+                },
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # Process the results from the zero-shot classifier
+        confidence = estimate_intent_confidence(confidence_scores)
+
+        # Return the final result
+        return {
+            "intent": predicted_intent,
+            "entities": extracted_entities,
+            "confidence": confidence,
+            "processing_time": time.time() - start_time
+        }
+
+    except Exception as e:
+        logger.error(f"Error in prediction: {str(e)}")
+        return {
+            "intent": "unknown",
+            "entities": {},
+            "confidence": "low",
+            "processing_time": time.time() - start_time,
+            "error": str(e)
+        }
+
+def extract_entities(ner_results, text):
+    # FIX: Standardize entity names to match what's used in bot2.py
+    entities = {"name": None, "role": None, "team_name": None, "repo": None}
+
+    # Extract person names from NER
+    person_entities = [ent for ent in ner_results if ent["entity_group"] == "PER"]
+    if person_entities:
+        entities["name"] = " ".join([ent["word"] for ent in person_entities]).strip()
+
+    # Extract team names using regex patterns
+    team_patterns = [
+        r"(?i)team\s+([A-Za-z][a-zA-Z0-9_.-]*)",         # Team X, Team Alpha, Team My-Project
+        r"(?i)in\s+([A-Za-z][a-zA-Z0-9_.-]*)\s+team",     # in Alpha team
+        r"(?i)for\s+team\s+([A-Za-z][a-zA-Z0-9_.-]*)",     # for team Alpha
+        r"(?i)^(?:show\s+)?team\s+([A-Za-z][a-zA-Z0-9_.-]+)$", # Matches "show team Cosmic Creators"
+        r"(?i)(create|make|new)\s+(?:new\s+)?team\s+([A-Za-z][a-zA-Z0-9_.-]+)", # Captures team name after create
+        r"(?i)(delete|remove)\s+(?:team\s+)?([A-Za-z][a-zA-Z0-9_.-]+)" # Captures team name after delete/remove
+    ]
+
+    for pattern in team_patterns:
+        team_match = re.search(pattern, text)
+        if team_match:
+            # Prioritize the team name found directly after "team" or in the "create team" pattern
+            if len(team_match.groups()) > 1:
+                entities["team_name"] = team_match.group(team_match.lastindex).strip()
+            else:
+                entities["team_name"] = team_match.group(1).strip()
+            break
+
+    # Extract roles using keywords and patterns
+    for role in ROLE_KEYWORDS:
+        if re.search(f"\\b{role}\\b", text.lower()):
+            # Find the complete role phrase
+            role_pattern = re.search(f"(?i)(senior|junior|lead|principal|chief)? ?{role}", text)
+            if role_pattern:
+                entities["role"] = role_pattern.group(0).strip()
+                break
+
+    # Extract repository URLs
+    repo_patterns = [
+        r"https?://github\.com/\S+",         # GitHub URLs
+        r"https?://gitlab\.com/\S+",         # GitLab URLs
+        r"https?://bitbucket\.org/\S+"       # Bitbucket URLs
+    ]
+
+    for pattern in repo_patterns:
+        repo_match = re.search(pattern, text)
+        if repo_match:
+            entities["repo"] = repo_match.group(0)
+            break
+
+    # Try to find missing names if not found by NER
+    if not entities["name"]:
+        # Look for common patterns like "add [name] as [role]"
+        name_patterns = [
+            r"(?i)add\s+\s+(\w+)\s+as",
+            r"(?i)assign\s+(\w+)\s+as",
+            r"(?i)for\s+(\w+)\s+as",
+            r"(?i)remove\s+(\w+)\s+from" # Added for remove member
+        ]
+        for pattern in name_patterns:
+            name_match = re.search(pattern, text)
+            if name_match:
+                entities["name"] = name_match.group(1)
+                break
+
+    # Clean up extracted entities
+    for key, value in entities.items():
+        if value:
+            entities[key] = value.strip()
+
+    return entities
+
+def estimate_intent_confidence(scores):
+    """Evaluate confidence in the intent classification"""
+    if not scores:
+        return "low"
+
+    top_score = scores[0]
+    if top_score > 0.8:
+        return "high"
+    elif top_score > 0.5:
+        return "medium"
+    else:
+        return "low"
+
+def predict(user_input):
+    """
+    Predicts intent and extracts entities from user input
+
+    Args:
+        user_input: String containing user's message
+
+    Returns:
+        dict: Contains 'intent', 'entities', 'confidence', and 'processing_time'
+    """
+    start_time = time.time()
+
+    try:
+        # Clean and prepare input
+        cleaned_input = user_input.strip()
+
+        # Handle empty or too short inputs
+        if not cleaned_input or len(cleaned_input) < 3:
+            return {
+                "intent": "unknown",
+                "entities": {},
+                "confidence": "low",
+                "processing_time": 0
+            }
+
+        # Check for help or greeting intents with simple rules first
+        if re.search(r"(?i)\b(help|how to use|what can you do)\b", cleaned_input):
+            return {
+                "intent": "help",
+                "entities": {},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        if re.search(r"(?i)\b(hello|hi|hey|greetings|good morning|good afternoon)\b", cleaned_input) and len(cleaned_input.split()) < 4:
+            return {
+                "intent": "greeting",
+                "entities": {},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        # Prioritize "assign role" detection with a clearer pattern
+        assign_role_pattern = re.search(r"(?i)(?:assign|set)\s+([a-zA-Z0-9_.-]+)\s+role\s+(?:to\s+)?([a-zA-Z0-9_.-]+)(?:\s+in\s+team\s+([A-Za-z0-9_.-]+))?", cleaned_input)
+        if assign_role_pattern:
+            entities = {"name": assign_role_pattern.group(2), "role": assign_role_pattern.group(1), "team_name": assign_role_pattern.group(3)}
+            return {
+                "intent": "assign_role",
+                "entities": {k: v.strip() if v else None for k, v in entities.items()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+        assign_role_pattern_alt = re.search(r"(?i)(?:assign|set)\s+role\s+([a-zA-Z0-9_.-]+)\s+(?:to\s+)?([a-zA-Z0-9_.-]+)(?:\s+in\s+team\s+([A-Za-z0-9_.-]+))?", cleaned_input)
+        if assign_role_pattern_alt:
+            entities = {"name": assign_role_pattern_alt.group(3), "role": assign_role_pattern_alt.group(2), "team_name": assign_role_pattern_alt.group(4)}
+            return {
+                "intent": "assign_role",
+                "entities": {k: v.strip() if v else None for k, v in entities.items()},
+                "confidence": "high",
+                "processing_time": time.time() - start_time
+            }
+
+
         # FIX: Prioritize "create team [team_name]" detection
         create_team_match = re.search(r"(?i)(create|make|new|add)\s+(?:new\s+)?team(?:,\s+)?([A-Za-z0-9_.-]+)", cleaned_input)
         if create_team_match:
@@ -264,7 +662,7 @@ def predict(user_input):
             predicted_intent = "remove_member"
 
         # Try to infer "assign_role" if the pattern "make [name] [role] in [team]" is found
-        make_role_match = re.search(r"(?i)make\s+(\w+)\s+([a-zA-Z\s]+)\s+in\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        make_role_match = re.search(r"(?i)make\s+([a-zA-Z0-9_.-]+)\s+([a-zA-Z\s]+)\s+in\s+([A-Za-z0-9_.-]+)", cleaned_input)
         if make_role_match:
             return {
                 "intent": "assign_role",
@@ -278,7 +676,7 @@ def predict(user_input):
             }
 
         # Try to infer "assign_role" if the pattern "assign [name] [role] to [team]" is found
-        assign_to_match = re.search(r"(?i)assign\s+(\w+)\s+([a-zA-Z\s]+)\s+to\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        assign_to_match = re.search(r"(?i)assign\s+([a-zA-Z0-9_.-]+)\s+([a-zA-Z\s]+)\s+to\s+([A-Za-z0-9_.-]+)", cleaned_input)
         if assign_to_match:
             return {
                 "intent": "assign_role",
@@ -292,7 +690,7 @@ def predict(user_input):
             }
 
         # Try to infer "set role of [name] as [role] in [team]"
-        set_role_match = re.search(r"(?i)set\s+role\s+of\s+(\w+)\s+as\s+([a-zA-Z\s]+)\s+in\s+([A-Za-z0-9_.-]+)", cleaned_input)
+        set_role_match = re.search(r"(?i)set\s+role\s+of\s+([a-zA-Z0-9_.-]+)\s+as\s+([a-zA-Z\s]+)\s+in\s+([A-Za-z0-9_.-]+)", cleaned_input)
         if set_role_match:
             return {
                 "intent": "assign_role",
@@ -332,7 +730,7 @@ def predict(user_input):
             }
 
         # Check for member info requests
-        member_info_match = re.search(r"(?i)info\s+(?:about|on)\s+(\w+)", cleaned_input)
+        member_info_match = re.search(r"(?i)info\s+(?:about|on)\s+([a-zA-Z0-9_.-]+)", cleaned_input)
         if member_info_match:
             return {
                 "intent": "get_member_info",
@@ -394,10 +792,12 @@ if __name__ == "__main__":
         "Set role of Mary as QA engineer in team Echo",
         "Update role of team Zeta to Senior Developer",
         "show team Cosmic Creators",  # Test case for showing team info
-        "delete team Avengers",      # Test case for deleting a team
+        "delete team Avengers",       # Test case for deleting a team
         "remove team Innovators",    # Test case for deleting a team using remove
-        "add team Galactic",        # test case to add team using add
-        "create team Nebula"         # test case to add team
+        "add team Galactic",         # test case to add team using add
+        "create team Nebula",          # test case to add team
+        "assign stockfish_ role dev1", # The problematic test case
+        "assign role dev1 to stockfish_", #  The problematic test case
     ]
 
     print("Running test cases:")

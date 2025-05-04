@@ -513,9 +513,17 @@ async def handle_update_team(message, entities):
 async def handle_show_team_info(message, entities):
     # === Fallback extractor if NLP misses team name ===
     def extract_team_name(text):
-        pattern = r"(?:show\s+(?:team\s+)?)(?:\"([^\"]+)\"|([A-Za-z\s]+))"
-        match = re.search(pattern, text, re.IGNORECASE)
-        return match.group(1) or match.group(2) if match else None
+        patterns = [
+            r"(?:show\s+team\s+)(?:\"([^\"]+)\"|([A-Za-z0-9_.-]+))",  
+            r"(?:show\s+)(?:\"([^\"]+)\"|([A-Za-z0-9_.-]+))",       
+            r"team\s+(?:\"([^\"]+)\"|([A-Za-z0-9_.-]+))",           # Matches "team 'Team Name'" or "team TeamName"
+            r"([A-Za-z0-9_.-]+)\s+info"                             # Matches "TeamName info"
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1) or match.group(2)
+        return None
 
     # Fallback entity extraction
     if not entities.get("team_name") and not entities.get("team"):
@@ -951,11 +959,11 @@ async def create_server_role(message: discord.Message, entities: dict):
 
 
 async def handle_assign_role(message, entities):
-    name = entities.get("member_name") or entities.get("name")
-    role = entities.get("role")
+    role = entities.get("member_name") or entities.get("name")
+    name = entities.get("role")
     team = entities.get("team_name") or entities.get("team")
 
-    if not name:
+    if not role:
         await message.channel.send("Error: Name not provided")
         return
     if not team:
@@ -979,16 +987,16 @@ async def handle_assign_role(message, entities):
 
         # ── NEW: actually give the role in Discord ────────────────────────
         guild = message.guild
-        if guild and name:                                   # skip in DMs or if no role supplied
+        if guild and role:                                   # skip in DMs or if no role supplied
             # 1) resolve the member (by mention, nickname, username, …)
-            member_obj = await resolve_member(team, guild)
+            member_obj = await resolve_member(name, guild)
             if member_obj:
                 # 2) find or create the role object
-                role_obj = discord.utils.get(guild.roles, name=name)
+                role_obj = discord.utils.get(guild.roles, name=role)
                 if role_obj is None:
                     try:
                         role_obj = await guild.create_role(
-                            name=name,
+                            name=role,
                             colour=discord.Color(random.randint(0, 0xFFFFFF)),
                             reason=f"Auto-created for team {team}",
                         )
